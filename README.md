@@ -1,4 +1,4 @@
-# force-directed graph
+# wgpu-template
 
 Running:
 

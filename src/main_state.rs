@@ -100,8 +100,14 @@ impl State {
         let (camera, camera_bind_group_layout) =
             Camera::new(cgmath::vec3(0.0, 0.0, 1.0), w, h, 1.0, &device);
 
-        let depth_texture = Texture::create_depth_texture(&device, &config, SAMPLE_COUNT, "Depth");
-        let msaa_texture = Texture::create_msaa_texture(&device, &config, "MSAA", SAMPLE_COUNT);
+        let depth_texture = Texture::create(
+            &device,
+            &config,
+            Some(Texture::DEPTH_FORMAT),
+            "Depth",
+            SAMPLE_COUNT,
+        );
+        let msaa_texture = Texture::create(&device, &config, None, "MSAA", SAMPLE_COUNT);
 
         // let nodes = vec![
         //     Node::new(
@@ -401,10 +407,15 @@ impl State {
             self.config.width = new_size.width;
             self.config.height = new_size.height;
             self.surface.configure(&self.device, &self.config);
+            self.depth_texture = Texture::create(
+                &self.device,
+                &self.config,
+                Some(Texture::DEPTH_FORMAT),
+                "Depth",
+                SAMPLE_COUNT,
+            );
             self.msaa_texture =
-                Texture::create_msaa_texture(&self.device, &self.config, "msaa", SAMPLE_COUNT);
-            self.depth_texture =
-                Texture::create_depth_texture(&self.device, &self.config, SAMPLE_COUNT, "depth");
+                Texture::create(&self.device, &self.config, None, "MSAA", SAMPLE_COUNT);
             self.camera
                 .resize(new_size.width as f32, new_size.height as f32, &self.queue);
         };
