@@ -122,6 +122,7 @@ impl EdgeRenderPass {
             }),
             multisample: wgpu::MultisampleState {
                 count: SAMPLE_COUNT as u32,
+                // count: 1,
                 ..Default::default()
             },
             multiview: None,

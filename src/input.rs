@@ -1,3 +1,5 @@
+use winit::event::ModifiersState;
+
 #[derive(Copy, Clone, Debug)]
 pub enum DragKind {
     Node(u32),
@@ -6,16 +8,14 @@ pub enum DragKind {
 
 pub struct InputState {
     pub dragging: Option<DragKind>,
-    pub is_ctrl_pressed: bool,
-    pub is_lalt_pressed: bool,
+    pub modifier_state: ModifiersState,
 }
 
 impl Default for InputState {
     fn default() -> Self {
         Self {
             dragging: Default::default(),
-            is_ctrl_pressed: false,
-            is_lalt_pressed: false,
+            modifier_state: Default::default(),
         }
     }
 }

@@ -11,18 +11,21 @@ anyhow = "1.0.68"
 bytemuck = { version="1.12.3", features=["derive"] }
 cfg-if = "1.0.0"
 cgmath = "0.18.0"
+console_log = "0.2.0"
 env_logger = "0.10.0"
 log = "0.4.17"
 pollster = "0.2.5"
+simple_logger = "4.0.0"
 wgpu = "0.14.2"
-winit = "0.27.5"
+# winit = "0.27.5"
+winit = { git="https://github.com/Liamolucko/winit", branch="resize-observer2", features=["css-size"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1"
 wgpu = { version="0.14.2", features=["webgl"]}
 wasm-bindgen = "0.2.83"
 wasm-bindgen-futures = "0.4.33"
-web-sys = { version="0.3.60", features = [
+web-sys = { version="0.3.58", features = [
     "Document",
     "Window",
     "Element",

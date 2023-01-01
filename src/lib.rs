@@ -7,13 +7,15 @@ pub mod node;
 pub mod physics;
 pub mod texture;
 
+use cfg_if::cfg_if;
+use log::info;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use bytemuck::{Pod, Zeroable};
-use cgmath::Vector4;
+use cgmath::{ElementWise, Vector4};
 use main_state::State;
 use winit::{
     dpi::LogicalSize,
@@ -22,10 +24,27 @@ use winit::{
     window::WindowBuilder,
 };
 
-pub const SAMPLE_COUNT: u8 = 4;
+cfg_if! {
+    if #[cfg(target_arch = "wasm32")] {
+        pub const SAMPLE_COUNT: u8 = 4;
+    } else {
+        pub const SAMPLE_COUNT: u8 = 4;
+    }
+}
 
+cfg_if! {
+    if #[cfg(target_os = "macos")] {
 // For MacOS bc retina screens double the amount of pixels
-pub const SCREEN_SCALE: f32 = 2.0;
+        pub const SCREEN_SCALE: f32 = 2.0;
+    } else {
+        pub const SCREEN_SCALE: f32 = 1.0;
+    }
+}
+
+pub fn convert_to_srgba(rgba: Vector4<f32>) -> Vector4<f32> {
+    (rgba).add_element_wise(0.055).map(|val| val.powf(2.4))
+    // (rgba).map(|val| val.powf(2.4))
+}
 
 #[rustfmt::skip]
 pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
@@ -98,22 +117,31 @@ pub fn run() {
     let mut start: u128 = 0;
 
     let event_loop = EventLoop::new();
-    let window = WindowBuilder::new()
-        .with_inner_size(LogicalSize {
-            width: 800,
-            height: 600,
-        })
-        // .with_min_inner_size()
-        // .with_max_inner_size(LogicalSize {
-        //     width: 800,
-        //     height: 600,
-        // })
-        .with_resizable(true)
-        .build(&event_loop)
-        .unwrap();
+    cfg_if! {
+        if #[cfg(target_arch = "wasm32")] {
+            let window = WindowBuilder::new()
+                .with_maximized(true)
+                .with_resizable(true)
+                .build(&event_loop)
+                .unwrap();
+        } else {
+            let window = WindowBuilder::new()
+                .with_inner_size(LogicalSize {
+                    width: 800,
+                    height: 600,
+                })
+                .with_resizable(true)
+                .build(&event_loop)
+                .unwrap();
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    simple_logger::init_with_level(log::Level::Info).unwrap();
 
     #[cfg(target_arch = "wasm32")]
     {
+        console_log::init_with_level(log::Level::Info);
         std::panic::set_hook(Box::new(console_error_panic_hook::hook));
         // Winit prevents sizing with CSS, so we have to set
         // the size manually when on web.
@@ -135,6 +163,7 @@ pub fn run() {
     let mut state = pollster::block_on(State::new(&window));
 
     event_loop.run(move |event, _, control_flow| {
+        #[cfg(not(target_arch = "wasm32"))]
         if start == 0 {
             start = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -142,6 +171,15 @@ pub fn run() {
                 .as_millis();
         }
 
+        // if !matches!(
+        //     event,
+        //     Event::RedrawRequested(_)
+        //         | Event::MainEventsCleared
+        //         | Event::RedrawEventsCleared
+        //         | Event::NewEvents(StartCause::Poll)
+        // ) {
+        //     info!("EVENT: {:#?}", event);
+        // }
         match event {
             Event::DeviceEvent { event, .. } => {
                 state.device_input(&event);
@@ -187,15 +225,19 @@ pub fn run() {
                     Err(wgpu::SurfaceError::Timeout) => log::warn!("Surface timeout"),
                 }
                 frame += 1;
-                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-                if now.as_millis() - start > 1000 {
-                    let fps = frame as f64 / ((now.as_millis() - start) as f64 / 1000.0);
-                    // window.set_title(&format!("{:.1$} fps", fps, 3));
-                    window.set_title(&format!(
-                        "{} fps — Nodes {}",
-                        fps,
-                        state.node_render_pass.nodes.len()
-                    ));
+
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+                    if now.as_millis() - start > 1000 {
+                        let fps = frame as f64 / ((now.as_millis() - start) as f64 / 1000.0);
+                        // window.set_title(&format!("{:.1$} fps", fps, 3));
+                        window.set_title(&format!(
+                            "{} fps — Nodes {}",
+                            fps,
+                            state.node_render_pass.nodes.len()
+                        ));
+                    }
                 }
             }
             Event::MainEventsCleared => {
@@ -260,7 +302,12 @@ impl ColorGenerator {
         let g = u8::from_str_radix(&hex[2..4], 16).unwrap();
         let b = u8::from_str_radix(&hex[4..6], 16).unwrap();
         // let a = u8::from_str_radix(&hex[6..8], 16).unwrap_or(255);
-        Vector4::new(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0)
+        convert_to_srgba(Vector4::new(
+            r as f32 / 255.0,
+            g as f32 / 255.0,
+            b as f32 / 255.0,
+            1.0,
+        ))
     }
 }
 

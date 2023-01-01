@@ -46,7 +46,7 @@ fn vs_main(in: VertexInput, instance: InstanceInput, @builtin(vertex_index) in_v
     let center2 = vec4<f32>(0.0, 0.0, 0.0, 1.0);
     let center = (camera.view_proj * model * center2).xy;
     let dims = vec4<f32>(camera.dimensions.x, camera.dimensions.y, 0.0, 1.0);
-    out.center = vec2<f32>((center.x * dims.x / 4.0) + dims.x / 4.0, (dims.y / 4.0) - (center.y * dims.y / 4.0));
+    out.center = vec2<f32>((center.x * dims.x / 2.0) + dims.x / 2.0, (dims.y / 2.0) - (center.y * dims.y / 2.0));
     // out.center = vec2<f32>(dims.x / 4.0, dims.y / 4.0);
     // out.position = vec4<f32>(pos.xy, 0.5, pos.w);
 

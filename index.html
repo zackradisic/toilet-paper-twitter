@@ -25,9 +25,13 @@
   </head>
 
   <!-- <body style="background-color: #14141C;"> -->
-  <body style="background-color: black" id="wasm-example">
+  <body
+    style="background-color: black; width: 100%; height: 100%"
+    id="wasm-example"
+  >
     <script type="module">
       import init from "./pkg/force_graph_wgpu.js";
+      console.log(window.innerWidth, window.innerHeight);
       //   document.addEventListener('load', () => )
       init().then(() => console.log("WASM LOADED!"));
     </script>

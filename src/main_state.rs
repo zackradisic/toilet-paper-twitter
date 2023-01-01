@@ -1,11 +1,16 @@
 use cgmath::{vec2, vec3, vec4, Rotation3, SquareMatrix};
+use log::info;
 use winit::{
-    event::{DeviceEvent, ElementState, KeyboardInput, VirtualKeyCode, WindowEvent},
+    event::{
+        DeviceEvent, ElementState, KeyboardInput, ModifiersState, MouseButton, VirtualKeyCode,
+        WindowEvent,
+    },
     window::Window,
 };
 
 use crate::{
     camera::Camera,
+    convert_to_srgba,
     edge::{Edge, EdgeRenderPass},
     input::{DragKind, InputState},
     mouse::Mouse,
@@ -24,7 +29,6 @@ pub struct State {
     pub size: winit::dpi::PhysicalSize<u32>,
     pub depth_texture: Texture,
     pub msaa_texture: Texture,
-
     pub camera: Camera,
     pub node_render_pass: NodeRenderPass,
     pub edge_render_pass: EdgeRenderPass,
@@ -53,11 +57,15 @@ impl State {
                 &wgpu::DeviceDescriptor {
                     label: None,
                     // features: wgpu::Features::DEPTH_CLIP_CONTROL,
-                    features: wgpu::Features::empty(),
+                    // features: wgpu::Features::empty(),
+                    features: wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
                     // WebGL doesn't support all of wgpu's features, so if
                     // we're building for the web we'll have to disable some.
                     limits: if cfg!(target_arch = "wasm32") {
-                        wgpu::Limits::downlevel_webgl2_defaults()
+                        wgpu::Limits {
+                            max_texture_dimension_2d: 4096,
+                            ..wgpu::Limits::downlevel_webgl2_defaults()
+                        }
                     } else {
                         wgpu::Limits::default()
                     },
@@ -68,14 +76,22 @@ impl State {
             .unwrap();
 
         let mut color = ColorGenerator::new();
-        let format = surface.get_supported_formats(&adapter)[3];
+
+        info!("Formats: {:#?}", surface.get_supported_formats(&adapter));
+        // let format = surface.get_supported_formats(&adapter)[1];
+        let format = surface.get_supported_formats(&adapter)[0];
         // let format = surface.get_supported_formats(&adapter)[0];
+        // let format = surface
+        //     .get_supported_formats(&adapter)
+        //     .into_iter()
+        //     .find(|fmt| !fmt.describe().srgb)
+        //     .unwrap();
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
             width: size.width,
             height: size.height,
-            present_mode: wgpu::PresentMode::Fifo,
+            present_mode: wgpu::PresentMode::AutoVsync,
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
         };
         surface.configure(&device, &config);
@@ -190,111 +206,21 @@ impl State {
     }
 
     pub fn input(&mut self, event: &WindowEvent) -> bool {
+        info!("EVENT: {:?}", event);
         match event {
-            WindowEvent::MouseWheel { delta, phase, .. } => {
-                let y = match delta {
-                    winit::event::MouseScrollDelta::LineDelta(_, y) => *y as f64,
-                    winit::event::MouseScrollDelta::PixelDelta(pos) => pos.y / 100.,
-                };
-
-                self.camera
-                    .update_scale(&self.queue, self.camera.scale + y as f32);
-            }
-            WindowEvent::CursorLeft { .. } => {
-                self.mouse.last_pos = self.mouse.pos.unwrap_or((0.0, 0.0).into());
-                self.mouse.pos = None;
-            }
-            WindowEvent::CursorMoved { position, .. } => {
-                let mut vec: cgmath::Vector2<f32> = (position.x as f32, position.y as f32).into();
-                vec.x -= self.camera.width / 2.0;
-                vec.y -= self.camera.height / 2.0;
-                // vec.x *= 2.0;
-                vec.y *= -1.0;
-                println!("CURSOR: {:?}", vec);
-                self.mouse.pos = Some(vec);
-            }
-            WindowEvent::KeyboardInput {
-                input:
-                    KeyboardInput {
-                        state: element_state,
-                        virtual_keycode: Some(VirtualKeyCode::LControl),
-                        ..
-                    },
+            WindowEvent::MouseInput {
+                state,
+                button: MouseButton::Left,
                 ..
-            } => {
-                let pressed = matches!(element_state, ElementState::Pressed);
-                self.input.is_ctrl_pressed = pressed;
-                if !pressed {
-                    self.input.dragging = None;
-                } else {
-                    self.input.dragging = self.input.dragging.map(|drag| match drag {
-                        DragKind::Node(node) => DragKind::EdgeCreation(node),
-                        other => other,
-                    });
-                }
-            }
-            WindowEvent::KeyboardInput {
-                input:
-                    KeyboardInput {
-                        state: element_state,
-                        virtual_keycode: Some(VirtualKeyCode::LAlt),
-                        ..
-                    },
-                ..
-            } => {
-                let pressed = matches!(element_state, ElementState::Pressed);
-                self.input.is_lalt_pressed = pressed;
-            }
-            _ => (),
-        }
-        false
-    }
-
-    pub fn add_node(&mut self, node: Node) {
-        let idx = self.node_render_pass.nodes.len();
-        self.physics.objs.push(physics::Object::from_node(
-            idx as u32,
-            &node,
-            DEFAULT_STRENGTH,
-        ));
-        self.node_render_pass.add_node(node, &self.queue)
-    }
-
-    pub fn add_edge(&mut self, edge: Edge) {
-        self.edge_render_pass.add_edge(edge, &self.queue);
-    }
-
-    pub fn set_dragging(&mut self, dragging: Option<DragKind>) {
-        self.input.dragging = dragging;
-    }
-
-    pub fn device_input(&mut self, event: &DeviceEvent) -> bool {
-        match event {
-            DeviceEvent::MouseMotion { delta } => {
-                match self.input.dragging {
-                    Some(DragKind::Node(node)) => {
-                        self.node_render_pass.nodes[node as usize].position.x +=
-                            delta.0 as f32 * 2.0 * (1. / self.camera.scale);
-                        self.node_render_pass.nodes[node as usize].position.y += -delta.1 as f32
-                        * 2.0
-                        // * (self.camera.height / self.camera.width)
-                        * (1. / self.camera.scale);
-                        self.node_render_pass.update_node(node, &self.queue);
-                        self.physics.objs[node as usize].x =
-                            self.node_render_pass.nodes[node as usize].position.x;
-                        self.physics.objs[node as usize].y =
-                            self.node_render_pass.nodes[node as usize].position.y;
-                    }
-                    _ => (),
-                }
-            }
-            DeviceEvent::Button { state, .. } => match state {
+            } => match state {
                 ElementState::Pressed => {
                     if let Some(pos) = &self.mouse.pos {
                         let pos = pos / self.camera.scale;
                         let pos3 = pos.extend(0.0);
 
-                        if self.input.is_lalt_pressed {
+                        info!("pos: {:?}", pos3);
+                        if self.input.modifier_state.contains(ModifiersState::ALT) {
+                            info!("ADDING NODE!");
                             let node = Node::new(
                                 (50.0, 50.0),
                                 pos.extend(0.0),
@@ -315,13 +241,28 @@ impl State {
                             .enumerate()
                             .find(|(_, node)| node.intersects(&pos3))
                         {
-                            self.set_dragging(if self.input.is_ctrl_pressed {
-                                Some(DragKind::EdgeCreation(i as u32))
-                            } else {
-                                Some(DragKind::Node(i as u32))
-                            });
+                            info!("FOUND NODE!: {:?}", i);
+                            self.set_dragging(
+                                if self.input.modifier_state.contains(ModifiersState::SHIFT) {
+                                    Some(DragKind::EdgeCreation(i as u32))
+                                } else {
+                                    Some(DragKind::Node(i as u32))
+                                },
+                            );
                             return false;
                         }
+
+                        // let node = Node::new(
+                        //     (50.0, 50.0),
+                        //     pos.extend(0.0),
+                        //     cgmath::Quaternion::from_axis_angle(
+                        //         cgmath::vec3(0.0, 0.0, 0.0),
+                        //         cgmath::Deg(0.0),
+                        //     ),
+                        //     self.color.next(),
+                        // );
+                        // self.add_node(node);
+                        return false;
                     }
                 }
                 ElementState::Released => {
@@ -351,9 +292,107 @@ impl State {
                     self.set_dragging(None);
                 }
             },
+            WindowEvent::MouseWheel { delta, phase, .. } => {
+                let y = match delta {
+                    winit::event::MouseScrollDelta::LineDelta(_, y) => *y as f64,
+                    winit::event::MouseScrollDelta::PixelDelta(pos) => pos.y / 100.,
+                };
+
+                self.camera
+                    .update_scale(&self.queue, self.camera.scale + y as f32);
+            }
+            WindowEvent::CursorLeft { .. } => {
+                self.mouse.last_pos = self.mouse.pos.unwrap_or((0.0, 0.0).into());
+                self.mouse.pos = None;
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                let mut vec: cgmath::Vector2<f32> = (position.x as f32, position.y as f32).into();
+                vec.x -= self.camera.width / 2.0;
+                vec.y -= self.camera.height / 2.0;
+                // vec.x *= 2.0;
+                vec.y *= -1.0;
+                self.mouse.pos = Some(vec);
+            }
+            WindowEvent::KeyboardInput {
+                input:
+                    KeyboardInput {
+                        state: element_state,
+                        virtual_keycode: Some(VirtualKeyCode::LShift),
+                        ..
+                    },
+                ..
+            } => {
+                let pressed = matches!(element_state, ElementState::Pressed);
+                self.input
+                    .modifier_state
+                    .set(ModifiersState::SHIFT, pressed);
+                if !pressed {
+                    self.input.dragging = None;
+                } else {
+                    self.input.dragging = self.input.dragging.map(|drag| match drag {
+                        DragKind::Node(node) => DragKind::EdgeCreation(node),
+                        other => other,
+                    });
+                }
+            }
+            WindowEvent::KeyboardInput {
+                input:
+                    KeyboardInput {
+                        state: element_state,
+                        virtual_keycode: Some(VirtualKeyCode::LAlt),
+                        ..
+                    },
+                ..
+            } => {
+                let pressed = matches!(element_state, ElementState::Pressed);
+                self.input.modifier_state.set(ModifiersState::ALT, pressed);
+            }
             _ => (),
         }
         false
+    }
+
+    pub fn device_input(&mut self, event: &DeviceEvent) -> bool {
+        match event {
+            DeviceEvent::MouseMotion { delta } => {
+                match self.input.dragging {
+                    Some(DragKind::Node(node)) => {
+                        self.node_render_pass.nodes[node as usize].position.x +=
+                            delta.0 as f32 * SCREEN_SCALE * (1. / self.camera.scale);
+                        self.node_render_pass.nodes[node as usize].position.y += -delta.1 as f32
+                        * SCREEN_SCALE
+                        // * (self.camera.height / self.camera.width)
+                        * (1. / self.camera.scale);
+                        self.node_render_pass.update_node(node, &self.queue);
+                        self.physics.objs[node as usize].x =
+                            self.node_render_pass.nodes[node as usize].position.x;
+                        self.physics.objs[node as usize].y =
+                            self.node_render_pass.nodes[node as usize].position.y;
+                    }
+                    _ => (),
+                }
+            }
+            _ => (),
+        }
+        false
+    }
+
+    pub fn add_node(&mut self, node: Node) {
+        let idx = self.node_render_pass.nodes.len();
+        self.physics.objs.push(physics::Object::from_node(
+            idx as u32,
+            &node,
+            DEFAULT_STRENGTH,
+        ));
+        self.node_render_pass.add_node(node, &self.queue)
+    }
+
+    pub fn add_edge(&mut self, edge: Edge) {
+        self.edge_render_pass.add_edge(edge, &self.queue);
+    }
+
+    pub fn set_dragging(&mut self, dragging: Option<DragKind>) {
+        self.input.dragging = dragging;
     }
 
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
@@ -362,11 +401,13 @@ impl State {
             self.config.width = new_size.width;
             self.config.height = new_size.height;
             self.surface.configure(&self.device, &self.config);
+            self.msaa_texture =
+                Texture::create_msaa_texture(&self.device, &self.config, "msaa", SAMPLE_COUNT);
             self.depth_texture =
                 Texture::create_depth_texture(&self.device, &self.config, SAMPLE_COUNT, "depth");
             self.camera
                 .resize(new_size.width as f32, new_size.height as f32, &self.queue);
-        }
+        };
     }
 
     pub fn update(&mut self) {
@@ -392,6 +433,11 @@ impl State {
         let view = output
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
+        let (view, resolve_target) = if SAMPLE_COUNT > 1 {
+            (&self.msaa_texture.view, Some(&view))
+        } else {
+            (&view, None)
+        };
 
         let mut encoder = self
             .device
@@ -400,12 +446,9 @@ impl State {
             });
 
         {
-            let (view, resolve_target) = if SAMPLE_COUNT > 1 {
-                (&self.msaa_texture.view, Some(&view))
-            } else {
-                (&view, None)
-            };
+            // let (view, resolve_target) = (&view, None);
 
+            let color = convert_to_srgba(vec4(20.0 / 256.0, 20.0 / 256., 28.0 / 256., 1.0));
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -413,10 +456,14 @@ impl State {
                     resolve_target,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 20.0 / 256.0,
-                            g: 20.0 / 256.,
-                            b: 28.0 / 256.,
-                            a: 1.0,
+                            // r: 20.0 / 256.0,
+                            // g: 20.0 / 256.,
+                            // b: 28.0 / 256.,
+                            // a: 1.0,
+                            r: color.x as f64,
+                            g: color.y as f64,
+                            b: color.z as f64,
+                            a: color.w as f64,
                         }),
                         store: true,
                     },

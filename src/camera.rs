@@ -2,7 +2,7 @@ use bytemuck::{Pod, Zeroable};
 use cgmath::{vec4, Matrix4, SquareMatrix};
 use wgpu::util::DeviceExt;
 
-use crate::OPENGL_TO_WGPU_MATRIX;
+use crate::{OPENGL_TO_WGPU_MATRIX, SCREEN_SCALE};
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, Pod, Zeroable)]
@@ -163,8 +163,8 @@ impl Camera {
     fn to_raw(matrix: Matrix4<f32>, width: f32, height: f32, scale: f32) -> CameraRaw {
         CameraRaw {
             matrix: matrix.into(),
-            // dimensions: [WIDTH * 2.0 * scale, HEIGHT * 2.0 * scale],
-            dimensions: [width * 2.0, height * 2.0],
+            // dimensions: [width * SCREEN_SCALE, height * SCREEN_SCALE],
+            dimensions: [width, height],
             scale,
             _pad: 0.0,
         }
