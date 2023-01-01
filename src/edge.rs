@@ -8,7 +8,7 @@ use crate::{node::Node, texture::Texture, Vertex, SAMPLE_COUNT};
 
 pub const DEFAULT_INSTANCE_BUFFER_CAP: usize = 1024;
 
-pub struct EdgeRenderPass {
+pub struct EdgePipeline {
     pub edges: Vec<Edge>,
     /// Maps node idx to edge indices
     pub edge_map: BTreeMap<u32, Vec<u32>>,
@@ -39,7 +39,7 @@ pub struct EdgeRaw {
     pub line_width: f32,
 }
 
-impl EdgeRenderPass {
+impl EdgePipeline {
     const INDICES: &[u16] = &[0, 1, 3, 3, 1, 2];
     const VERTICES: &[Vertex] = &[
         Vertex {

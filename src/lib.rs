@@ -235,7 +235,7 @@ pub fn run() {
                         window.set_title(&format!(
                             "{} fps — Nodes {}",
                             fps,
-                            state.node_render_pass.nodes.len()
+                            state.node_pipeline.nodes.len()
                         ));
                     }
                 }

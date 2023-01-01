@@ -1,4 +1,4 @@
-use cgmath::{vec2, vec3, vec4, Rotation3, SquareMatrix};
+use cgmath::{vec4, Rotation3};
 use log::info;
 use winit::{
     event::{
@@ -11,12 +11,11 @@ use winit::{
 use crate::{
     camera::Camera,
     convert_to_srgba,
-    edge::{Edge, EdgeRenderPass},
+    edge::{Edge, EdgePipeline},
     input::{DragKind, InputState},
     mouse::Mouse,
-    node::{Node, NodeRenderPass},
+    node::{Node, NodePipeline},
     physics::{self, Physics, DEFAULT_STRENGTH},
-    screen_space_to_clip_space, screen_vec_to_clip_vec,
     texture::Texture,
     ColorGenerator, SAMPLE_COUNT, SCREEN_SCALE,
 };
@@ -30,11 +29,11 @@ pub struct State {
     pub depth_texture: Texture,
     pub msaa_texture: Texture,
     pub camera: Camera,
-    pub node_render_pass: NodeRenderPass,
-    pub edge_render_pass: EdgeRenderPass,
+    pub node_pipeline: NodePipeline,
+    pub edge_pipeline: EdgePipeline,
     pub physics: Physics,
     pub mouse: Mouse,
-    pub input: InputState, // pub edges: EdgeRenderPass,
+    pub input: InputState,
     pub color: ColorGenerator,
 }
 
@@ -136,7 +135,7 @@ impl State {
         //     ),
         // ];
         let nodes = vec![];
-        let node_render_pass = NodeRenderPass::new(
+        let node_pipeline = NodePipeline::new(
             // nodes
             //     .clone()
             //     .into_iter()
@@ -188,10 +187,10 @@ impl State {
         //     ),
         // ];
         let edges = vec![];
-        let edge_render_pass =
-            EdgeRenderPass::new(edges, &device, &queue, format, &camera_bind_group_layout);
+        let edge_pipeline =
+            EdgePipeline::new(edges, &device, &queue, format, &camera_bind_group_layout);
 
-        let physics = Physics::new(&node_render_pass.nodes);
+        let physics = Physics::new(&node_pipeline.nodes);
 
         Self {
             surface,
@@ -202,8 +201,8 @@ impl State {
             depth_texture,
             msaa_texture,
             camera,
-            node_render_pass,
-            edge_render_pass,
+            node_pipeline,
+            edge_pipeline,
             physics,
             mouse: Mouse::default(),
             input: InputState::default(),
@@ -241,7 +240,7 @@ impl State {
                         }
 
                         if let Some((i, _)) = self
-                            .node_render_pass
+                            .node_pipeline
                             .nodes
                             .iter()
                             .enumerate()
@@ -277,19 +276,19 @@ impl State {
                             let pos = pos / self.camera.scale;
                             let pos3 = pos.extend(0.0);
                             if let Some((b, _)) = self
-                                .node_render_pass
+                                .node_pipeline
                                 .nodes
                                 .iter()
                                 .enumerate()
                                 .find(|(_, node)| node.intersects(&pos3))
                             {
                                 let edge = Edge::from_nodes(
-                                    (&self.node_render_pass.nodes[a as usize], a),
-                                    (&self.node_render_pass.nodes[b], b as u32),
+                                    (&self.node_pipeline.nodes[a as usize], a),
+                                    (&self.node_pipeline.nodes[b], b as u32),
                                     vec4(0.0, 1.0, 0.0, 1.0),
                                     10.0,
                                 );
-                                self.edge_render_pass.add_edge(edge, &self.queue);
+                                self.edge_pipeline.add_edge(edge, &self.queue);
                             }
                         }
                         _ => (),
@@ -363,17 +362,17 @@ impl State {
             DeviceEvent::MouseMotion { delta } => {
                 match self.input.dragging {
                     Some(DragKind::Node(node)) => {
-                        self.node_render_pass.nodes[node as usize].position.x +=
+                        self.node_pipeline.nodes[node as usize].position.x +=
                             delta.0 as f32 * SCREEN_SCALE * (1. / self.camera.scale);
-                        self.node_render_pass.nodes[node as usize].position.y += -delta.1 as f32
+                        self.node_pipeline.nodes[node as usize].position.y += -delta.1 as f32
                         * SCREEN_SCALE
                         // * (self.camera.height / self.camera.width)
                         * (1. / self.camera.scale);
-                        self.node_render_pass.update_node(node, &self.queue);
+                        self.node_pipeline.update_node(node, &self.queue);
                         self.physics.objs[node as usize].x =
-                            self.node_render_pass.nodes[node as usize].position.x;
+                            self.node_pipeline.nodes[node as usize].position.x;
                         self.physics.objs[node as usize].y =
-                            self.node_render_pass.nodes[node as usize].position.y;
+                            self.node_pipeline.nodes[node as usize].position.y;
                     }
                     _ => (),
                 }
@@ -384,17 +383,17 @@ impl State {
     }
 
     pub fn add_node(&mut self, node: Node) {
-        let idx = self.node_render_pass.nodes.len();
+        let idx = self.node_pipeline.nodes.len();
         self.physics.objs.push(physics::Object::from_node(
             idx as u32,
             &node,
             DEFAULT_STRENGTH,
         ));
-        self.node_render_pass.add_node(node, &self.queue)
+        self.node_pipeline.add_node(node, &self.queue)
     }
 
     pub fn add_edge(&mut self, edge: Edge) {
-        self.edge_render_pass.add_edge(edge, &self.queue);
+        self.edge_pipeline.add_edge(edge, &self.queue);
     }
 
     pub fn set_dragging(&mut self, dragging: Option<DragKind>) {
@@ -427,16 +426,16 @@ impl State {
                 DragKind::Node(node) => Some(node),
                 _ => None,
             }),
-            &self.edge_render_pass.edges,
-            &self.edge_render_pass.edge_map,
+            &self.edge_pipeline.edges,
+            &self.edge_pipeline.edge_map,
         );
         self.physics.apply(
-            self.node_render_pass.nodes.as_mut_slice(),
-            &mut self.edge_render_pass.edges,
-            &self.edge_render_pass.edge_map,
+            self.node_pipeline.nodes.as_mut_slice(),
+            &mut self.edge_pipeline.edges,
+            &self.edge_pipeline.edge_map,
         );
-        self.node_render_pass.write(&self.queue);
-        self.edge_render_pass.write(&self.queue);
+        self.node_pipeline.write(&self.queue);
+        self.edge_pipeline.write(&self.queue);
     }
 
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
@@ -490,9 +489,9 @@ impl State {
                 }),
             });
 
-            self.edge_render_pass
+            self.edge_pipeline
                 .render(&self.camera.bind_group, &mut render_pass);
-            self.node_render_pass
+            self.node_pipeline
                 .render(&self.camera.bind_group, &mut render_pass);
         }
 

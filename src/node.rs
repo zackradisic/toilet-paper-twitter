@@ -7,7 +7,7 @@ use crate::{texture::Texture, Vertex, SAMPLE_COUNT};
 
 pub const DEFAULT_INSTANCE_BUFFER_CAP: usize = 1024;
 
-pub struct NodeRenderPass {
+pub struct NodePipeline {
     pub nodes: Vec<Node>,
     pub pipeline: wgpu::RenderPipeline,
     pub vertex_buffer: wgpu::Buffer,
@@ -31,7 +31,7 @@ pub struct NodeRaw {
     center: [f32; 3],
 }
 
-impl NodeRenderPass {
+impl NodePipeline {
     const INDICES: &[u16] = &[0, 1, 3, 3, 1, 2];
     const VERTICES: &[Vertex] = &[
         Vertex {
