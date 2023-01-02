@@ -436,6 +436,7 @@ name = "force-graph-wgpu"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bitflags",
  "bytemuck",
  "cfg-if",
  "cgmath",

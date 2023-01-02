@@ -2,7 +2,7 @@ use bytemuck::{Pod, Zeroable};
 use cgmath::{vec4, Matrix4, SquareMatrix};
 use wgpu::util::DeviceExt;
 
-use crate::{OPENGL_TO_WGPU_MATRIX, SCREEN_SCALE};
+use crate::{input::MovementState, OPENGL_TO_WGPU_MATRIX, SCREEN_SCALE};
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, Pod, Zeroable)]
@@ -83,6 +83,25 @@ impl Camera {
                 self.scale,
             )]),
         );
+    }
+
+    pub fn update(&mut self, queue: &wgpu::Queue, movement: MovementState) {
+        let mut translate = self.translate;
+        if movement.contains(MovementState::W) {
+            translate.z += 1.0;
+            // translate.y += 1.0;
+        }
+        if movement.contains(MovementState::A) {
+            translate.x -= 1.0;
+        }
+        if movement.contains(MovementState::S) {
+            // translate.y -= 1.0;
+            translate.z -= 1.0;
+        }
+        if movement.contains(MovementState::D) {
+            translate.x += 1.0;
+        }
+        self.update_translate(&queue, translate);
     }
 
     pub fn new(

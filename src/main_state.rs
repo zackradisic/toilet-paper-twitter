@@ -1,4 +1,4 @@
-use cgmath::{vec4, Rotation3};
+use cgmath::{vec4, Rotation3, Vector4};
 use log::info;
 use winit::{
     event::{
@@ -11,8 +11,9 @@ use winit::{
 use crate::{
     camera::Camera,
     convert_to_srgba,
+    debug::Debug,
     edge::{Edge, EdgePipeline},
-    input::{DragKind, InputState},
+    input::{DragKind, InputState, MovementState},
     mouse::Mouse,
     node::{Node, NodePipeline},
     physics::{self, Physics, DEFAULT_STRENGTH},
@@ -28,13 +29,19 @@ pub struct State {
     pub size: winit::dpi::PhysicalSize<u32>,
     pub depth_texture: Texture,
     pub msaa_texture: Texture,
+
     pub camera: Camera,
     pub node_pipeline: NodePipeline,
     pub edge_pipeline: EdgePipeline,
+
+    #[cfg(feature = "debug")]
+    pub debug: Debug,
+
     pub physics: Physics,
     pub mouse: Mouse,
     pub input: InputState,
     pub color: ColorGenerator,
+    pub bg: Vector4<f32>,
 }
 
 impl State {
@@ -74,17 +81,9 @@ impl State {
             .await
             .unwrap();
 
-        let mut color = ColorGenerator::new();
+        let color = ColorGenerator::new();
 
-        info!("Formats: {:#?}", surface.get_supported_formats(&adapter));
-        // let format = surface.get_supported_formats(&adapter)[1];
         let format = surface.get_supported_formats(&adapter)[0];
-        // let format = surface.get_supported_formats(&adapter)[0];
-        // let format = surface
-        //     .get_supported_formats(&adapter)
-        //     .into_iter()
-        //     .find(|fmt| !fmt.describe().srgb)
-        //     .unwrap();
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
@@ -108,101 +107,34 @@ impl State {
         );
         let msaa_texture = Texture::create(&device, &config, None, "MSAA", SAMPLE_COUNT);
 
-        // let nodes = vec![
-        //     Node::new(
-        //         vec2(50.0, 50.0),
-        //         (0.0, 0.0, 0.0),
-        //         cgmath::Quaternion::from_axis_angle(cgmath::vec3(0.0, 0.0, 0.0), cgmath::Deg(0.0)),
-        //         color.next(),
-        //     ),
-        //     Node::new(
-        //         vec2(50.0, 50.0),
-        //         (-50.0 * 2.0, 0.0, 0.0),
-        //         cgmath::Quaternion::from_axis_angle(cgmath::vec3(0.0, 0.0, 0.0), cgmath::Deg(0.0)),
-        //         color.next(),
-        //     ),
-        //     Node::new(
-        //         vec2(50.0, 50.0),
-        //         (50.0 * 2.0, 0.0, 0.0),
-        //         cgmath::Quaternion::from_axis_angle(cgmath::vec3(0.0, 0.0, 0.0), cgmath::Deg(0.0)),
-        //         color.next(),
-        //     ),
-        //     Node::new(
-        //         vec2(50.0, 50.0),
-        //         (50.0 * 2.0, -50.0 * 2.0, 0.0),
-        //         cgmath::Quaternion::from_axis_angle(cgmath::vec3(0.0, 0.0, 0.0), cgmath::Deg(0.0)),
-        //         color.next(),
-        //     ),
-        // ];
         let nodes = vec![];
-        let node_pipeline = NodePipeline::new(
-            // nodes
-            //     .clone()
-            //     .into_iter()
-            //     .chain(nodes.clone().into_iter())
-            //     .chain(nodes.clone().into_iter())
-            //     .chain(nodes.clone().into_iter())
-            //     .map(|mut node| {
-            //         node.color = color.next();
-            //         node
-            //     })
-            //     .collect(),
-            nodes,
-            &device,
-            &queue,
-            format,
-            &camera_bind_group_layout,
-        );
+        let node_pipeline =
+            NodePipeline::new(nodes, &device, &queue, format, &camera_bind_group_layout);
 
-        // let edges = vec![
-        //     Edge::from_nodes(
-        //         (&node_render_pass.nodes[0], 0),
-        //         (&node_render_pass.nodes[1], 1),
-        //         cgmath::vec4(0.0, 1.0, 0.0, 1.0),
-        //         10.0,
-        //     ),
-        //     Edge::from_nodes(
-        //         (&node_render_pass.nodes[1], 1),
-        //         (&node_render_pass.nodes[2], 2),
-        //         cgmath::vec4(0.0, 1.0, 0.0, 1.0),
-        //         10.0,
-        //     ),
-        //     Edge::from_nodes(
-        //         (&node_render_pass.nodes[0], 1),
-        //         (&node_render_pass.nodes[2], 2),
-        //         cgmath::vec4(0.0, 1.0, 0.0, 1.0),
-        //         10.0,
-        //     ),
-        //     Edge::from_nodes(
-        //         (&node_render_pass.nodes[0], 0),
-        //         (&node_render_pass.nodes[2], 2),
-        //         cgmath::vec4(0.0, 1.0, 0.0, 1.0),
-        //         10.0,
-        //     ),
-        //     Edge::from_nodes(
-        //         (&node_render_pass.nodes[1], 1),
-        //         (&node_render_pass.nodes[4], 4),
-        //         cgmath::vec4(0.0, 1.0, 0.0, 1.0),
-        //         10.0,
-        //     ),
-        // ];
         let edges = vec![];
         let edge_pipeline =
             EdgePipeline::new(edges, &device, &queue, format, &camera_bind_group_layout);
 
         let physics = Physics::new(&node_pipeline.nodes);
+        let bg = convert_to_srgba(vec4(20.0 / 256.0, 20.0 / 256., 28.0 / 256., 1.0));
 
         Self {
             surface,
-            device,
             queue,
             config,
             size,
             depth_texture,
             msaa_texture,
+
             camera,
             node_pipeline,
             edge_pipeline,
+
+            #[cfg(feature = "debug")]
+            debug: Debug::new(&device),
+
+            bg,
+            device,
             physics,
             mouse: Mouse::default(),
             input: InputState::default(),
@@ -352,6 +284,41 @@ impl State {
                 let pressed = matches!(element_state, ElementState::Pressed);
                 self.input.modifier_state.set(ModifiersState::ALT, pressed);
             }
+            WindowEvent::KeyboardInput {
+                input:
+                    KeyboardInput {
+                        state: element_state,
+                        virtual_keycode: Some(key),
+                        ..
+                    },
+                ..
+            } => match key {
+                VirtualKeyCode::W => {
+                    self.input.movement_state.set(
+                        MovementState::W,
+                        matches!(element_state, ElementState::Pressed),
+                    );
+                }
+                VirtualKeyCode::A => {
+                    self.input.movement_state.set(
+                        MovementState::A,
+                        matches!(element_state, ElementState::Pressed),
+                    );
+                }
+                VirtualKeyCode::S => {
+                    self.input.movement_state.set(
+                        MovementState::S,
+                        matches!(element_state, ElementState::Pressed),
+                    );
+                }
+                VirtualKeyCode::D => {
+                    self.input.movement_state.set(
+                        MovementState::D,
+                        matches!(element_state, ElementState::Pressed),
+                    );
+                }
+                _ => (),
+            },
             _ => (),
         }
         false
@@ -456,9 +423,6 @@ impl State {
             });
 
         {
-            // let (view, resolve_target) = (&view, None);
-
-            let color = convert_to_srgba(vec4(20.0 / 256.0, 20.0 / 256., 28.0 / 256., 1.0));
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -466,14 +430,10 @@ impl State {
                     resolve_target,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            // r: 20.0 / 256.0,
-                            // g: 20.0 / 256.,
-                            // b: 28.0 / 256.,
-                            // a: 1.0,
-                            r: color.x as f64,
-                            g: color.y as f64,
-                            b: color.z as f64,
-                            a: color.w as f64,
+                            r: self.bg.x as f64,
+                            g: self.bg.y as f64,
+                            b: self.bg.z as f64,
+                            a: self.bg.w as f64,
                         }),
                         store: true,
                     },
@@ -497,6 +457,15 @@ impl State {
 
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
+
+        // Debugging
+        // wgpu::util::DownloadBuffer::read_buffer(
+        //     &self.device,
+        //     &self.queue,
+        //     &self.debug.buffer.slice(0..1024),
+        //     |result| {},
+        // );
+
         Ok(())
     }
 }

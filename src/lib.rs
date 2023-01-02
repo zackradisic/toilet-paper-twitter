@@ -7,8 +7,11 @@ pub mod node;
 pub mod physics;
 pub mod texture;
 
+#[cfg(feature = "debug")]
+pub mod debug;
+
 use cfg_if::cfg_if;
-use log::info;
+
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
