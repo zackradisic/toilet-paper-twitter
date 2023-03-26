@@ -46,3 +46,15 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let diffuse_strength = max(dot(in.normal, world_normal), 0.8);
     return ret * diffuse_strength;
 }
+
+// @fragment
+// fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+//     let ret = textureSample(t_diffuse, s_diffuse, in.tex_coords);
+//     let camera_pos = vec3<f32>(0.0, 0.0, 30.0);
+//     let look_pos = vec3<f32>(5.0, 0.0, 0.0);
+//     let world_dir = look_pos - camera_pos;
+//     // let world_normal = normalize(vec3<f32>(50.0, 6.0, 50.0));
+//     let world_normal = normalize(world_dir);
+//     let diffuse_strength = max(dot(in.normal, world_normal), 0.0) * 2.0;
+//     return (ret * 0.1) * diffuse_strength;
+// }

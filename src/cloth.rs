@@ -39,10 +39,17 @@ impl Physics {
                 queue,
                 format,
                 camera_bind_group_layout,
-                14.0,
+                // more cloth-y toilet paper
+                // 14.0,
+                // 10.0,
+                // 45,
+                // 55,
+                // most accurate toilet paper
                 10.0,
-                55,
-                45,
+                14.0,
+                22,
+                26,
+                // long 16:9-like cloth
                 // 10.0,
                 // 14.0,
                 // 45,
@@ -66,6 +73,7 @@ impl Physics {
         }
 
         if updated {
+            self.cloth.update_normals();
             self.update_wgpu(&queue);
         }
     }
@@ -81,6 +89,7 @@ pub struct Particle {
     pub old_position: Vector3<f32>,
     pub acceleration: Vector3<f32>,
     pub tex_coords: Vector2<f32>,
+    pub accumulated_normal: Vector3<f32>,
     pub is_movable: bool,
 }
 
@@ -91,12 +100,21 @@ impl Default for Particle {
             old_position: (0.0, 0.0, 0.0).into(),
             acceleration: (0.0, 0.0, 0.0).into(),
             tex_coords: (0.0, 0.0).into(),
+            accumulated_normal: (0.0, 0.0, 0.0).into(),
             is_movable: true,
         }
     }
 }
 
 impl Particle {
+    pub fn add_normal(&mut self, normal: Vector3<f32>) {
+        self.accumulated_normal += normal.normalize();
+    }
+
+    pub fn reset_normal(&mut self) {
+        self.accumulated_normal = (0.0, 0.0, 0.0).into();
+    }
+
     pub fn offset_pos(&mut self, offset: Vector3<f32>) {
         if self.is_movable {
             self.position += offset;
@@ -215,26 +233,13 @@ impl Cloth {
         }
 
         // creating particles in a grid of particles from (0,0,0) to (width,-height,0)
-        let mut wtf: Vec<(f32, f32)> = vec![];
         for x in 0..num_particles_width {
             for y in 0..num_particles_height {
-                if x == num_particles_width - 1 && y == num_particles_height - 1 {
-                    println!(
-                        "(width={} height={}) last particle: {} {}",
-                        width,
-                        height,
-                        width * (x as f32 / num_particles_width as f32),
-                        -height * (y as f32 / num_particles_height as f32)
-                    );
-                }
-
                 let pos = vec3(
                     width * (x as f32 / num_particles_width as f32),
                     -height * (y as f32 / num_particles_height as f32),
                     0.0,
                 );
-
-                wtf.push((pos.x, pos.y));
 
                 // let idx = get_particle_idx(x, y);
                 let idx = y * num_particles_width + x;
@@ -242,7 +247,9 @@ impl Cloth {
                     position: pos.clone(),
                     old_position: pos,
                     acceleration: vec3(0.0, 0.0, 0.0),
+                    accumulated_normal: vec3(0.0, 0.0, 0.0),
                     is_movable: true,
+
                     tex_coords: vec2(pos.x / width, pos.y.abs() / height),
                 };
             }
@@ -581,10 +588,6 @@ impl Cloth {
                     &particles[get_particle_idx(x, y + 1)],
                 ];
 
-                let normal1 = Self::calc_triangle_normal(tmp[0], tmp[1], tmp[2]).normalize();
-                let normal2 = Self::calc_triangle_normal(tmp[3], tmp[4], tmp[5]).normalize();
-                let tmp_normal = [normal1, normal1, normal1, normal2, normal2, normal2];
-
                 vertices.extend(tmp.iter().map(|p| Vertex {
                     position: p.position.into(),
                     // _pad: 0.0,
@@ -594,8 +597,8 @@ impl Cloth {
                     position: p.tex_coords.into(),
                 }));
 
-                normals.extend(tmp_normal.iter().map(|n| Vertex {
-                    position: n.clone().into(),
+                normals.extend(tmp.iter().map(|p| Vertex {
+                    position: p.accumulated_normal.normalize().into(),
                     // _pad: 0.0,
                 }));
             }
@@ -605,9 +608,45 @@ impl Cloth {
     pub fn update(&mut self, timestep: f32) {
         // gravity
         self.add_force(vec3(0.0, -2.8, 0.0) * timestep);
-        self.add_wind_force(vec3(100.5, 0.0, 0.2) * timestep);
+        self.add_wind_force(vec3(10.5, 0.0, 0.2) * timestep);
+        // self.add_wind_force(vec3(100.5, 0.0, 0.2) * timestep);
         // self.add_wind_force(vec3(0.5, 0.0, 0.2) * timestep);
         self.time_step(timestep);
+    }
+
+    fn particle_mut(&mut self, x: usize, y: usize) -> &mut Particle {
+        let idx = self.get_particle_idx(x, y);
+        &mut self.particles[idx]
+    }
+
+    fn update_normals(&mut self) {
+        for particle in self.particles.iter_mut() {
+            particle.reset_normal();
+        }
+
+        for x in 0..self.num_particles_width - 1 {
+            for y in 0..self.num_particles_height - 1 {
+                let normal = Self::calc_triangle_normal(
+                    &self.particles[self.get_particle_idx(x + 1, y)],
+                    &self.particles[self.get_particle_idx(x, y)],
+                    &self.particles[self.get_particle_idx(x, y + 1)],
+                );
+
+                self.particle_mut(x + 1, y).add_normal(normal);
+                self.particle_mut(x, y).add_normal(normal);
+                self.particle_mut(x, y + 1).add_normal(normal);
+
+                let normal = Self::calc_triangle_normal(
+                    &self.particles[self.get_particle_idx(x + 1, y + 1)],
+                    &self.particles[self.get_particle_idx(x + 1, y)],
+                    &self.particles[self.get_particle_idx(x, y + 1)],
+                );
+
+                self.particle_mut(x + 1, y + 1).add_normal(normal);
+                self.particle_mut(x + 1, y).add_normal(normal);
+                self.particle_mut(x, y + 1).add_normal(normal);
+            }
+        }
     }
 
     pub fn render<'a, 'b>(
