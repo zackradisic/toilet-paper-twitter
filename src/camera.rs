@@ -1,8 +1,8 @@
 use bytemuck::{Pod, Zeroable};
-use cgmath::{vec4, Matrix4, SquareMatrix};
+use cgmath::{Matrix4, SquareMatrix};
 use wgpu::util::DeviceExt;
 
-use crate::{input::MovementState, OPENGL_TO_WGPU_MATRIX, SCREEN_SCALE};
+use crate::{input::MovementState, OPENGL_TO_WGPU_MATRIX};
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, Pod, Zeroable)]
@@ -32,16 +32,25 @@ impl Camera {
         translate: &cgmath::Matrix4<f32>,
         scale: &cgmath::Matrix4<f32>,
     ) -> cgmath::Matrix4<f32> {
+        // OPENGL_TO_WGPU_MATRIX
+        //     * cgmath::ortho(
+        //         -width / 2.0,
+        //         width / 2.0,
+        //         -height / 2.0,
+        //         height / 2.0,
+        //         0.1,
+        //         100.0,
+        //     )
+        //     * translate.invert().unwrap()
+        //     * scale
         OPENGL_TO_WGPU_MATRIX
-            * cgmath::ortho(
-                -width / 2.0,
-                width / 2.0,
-                -height / 2.0,
-                height / 2.0,
-                0.1,
-                100.0,
+            * cgmath::perspective(cgmath::Deg(45.0), width / height, 0.1, 100.0)
+            * cgmath::Matrix4::look_at_rh(
+                // translate.invert().unwrap(),
+                (0.0, 0.0, 30.0).into(),
+                (5.0, 0.0, 0.0).into(),
+                (0.0, 1.0, 0.0).into(),
             )
-            * translate.invert().unwrap()
             * scale
     }
 

@@ -10,13 +10,11 @@ use winit::{
 
 use crate::{
     camera::Camera,
+    cloth::Physics,
     convert_to_srgba,
     debug::Debug,
-    edge::{Edge, EdgePipeline},
     input::{DragKind, InputState, MovementState},
     mouse::Mouse,
-    node::{Node, NodePipeline},
-    physics::{self, Physics, DEFAULT_STRENGTH},
     texture::Texture,
     ColorGenerator, SAMPLE_COUNT, SCREEN_SCALE,
 };
@@ -30,17 +28,15 @@ pub struct State {
     pub depth_texture: Texture,
     pub msaa_texture: Texture,
 
+    pub physics: Physics,
+
     pub camera: Camera,
-    pub node_pipeline: NodePipeline,
-    pub edge_pipeline: EdgePipeline,
 
     #[cfg(feature = "debug")]
     pub debug: Debug,
 
-    pub physics: Physics,
     pub mouse: Mouse,
     pub input: InputState,
-    pub color: ColorGenerator,
     pub bg: Vector4<f32>,
 }
 
@@ -107,18 +103,10 @@ impl State {
         );
         let msaa_texture = Texture::create(&device, &config, None, "MSAA", SAMPLE_COUNT);
 
-        let nodes = vec![];
-        let node_pipeline =
-            NodePipeline::new(nodes, &device, &queue, format, &camera_bind_group_layout);
-
-        let edges = vec![];
-        let edge_pipeline =
-            EdgePipeline::new(edges, &device, &queue, format, &camera_bind_group_layout);
-
-        let physics = Physics::new(&node_pipeline.nodes);
         let bg = convert_to_srgba(vec4(20.0 / 256.0, 20.0 / 256., 28.0 / 256., 1.0));
 
         Self {
+            physics: Physics::new(&device, &queue, format, &camera_bind_group_layout),
             surface,
             queue,
             config,
@@ -127,107 +115,26 @@ impl State {
             msaa_texture,
 
             camera,
-            node_pipeline,
-            edge_pipeline,
 
             #[cfg(feature = "debug")]
             debug: Debug::new(&device),
 
             bg,
             device,
-            physics,
             mouse: Mouse::default(),
             input: InputState::default(),
-            color,
         }
     }
 
     pub fn input(&mut self, event: &WindowEvent) -> bool {
-        info!("EVENT: {:?}", event);
         match event {
             WindowEvent::MouseInput {
                 state,
                 button: MouseButton::Left,
                 ..
             } => match state {
-                ElementState::Pressed => {
-                    if let Some(pos) = &self.mouse.pos {
-                        let pos = pos / self.camera.scale;
-                        let pos3 = pos.extend(0.0);
-
-                        info!("pos: {:?}", pos3);
-                        if self.input.modifier_state.contains(ModifiersState::ALT) {
-                            info!("ADDING NODE!");
-                            let node = Node::new(
-                                (50.0, 50.0),
-                                pos.extend(0.0),
-                                cgmath::Quaternion::from_axis_angle(
-                                    cgmath::vec3(0.0, 0.0, 0.0),
-                                    cgmath::Deg(0.0),
-                                ),
-                                self.color.next(),
-                            );
-                            self.add_node(node);
-                            return false;
-                        }
-
-                        if let Some((i, _)) = self
-                            .node_pipeline
-                            .nodes
-                            .iter()
-                            .enumerate()
-                            .find(|(_, node)| node.intersects(&pos3))
-                        {
-                            info!("FOUND NODE!: {:?}", i);
-                            self.set_dragging(
-                                if self.input.modifier_state.contains(ModifiersState::SHIFT) {
-                                    Some(DragKind::EdgeCreation(i as u32))
-                                } else {
-                                    Some(DragKind::Node(i as u32))
-                                },
-                            );
-                            return false;
-                        }
-
-                        // let node = Node::new(
-                        //     (50.0, 50.0),
-                        //     pos.extend(0.0),
-                        //     cgmath::Quaternion::from_axis_angle(
-                        //         cgmath::vec3(0.0, 0.0, 0.0),
-                        //         cgmath::Deg(0.0),
-                        //     ),
-                        //     self.color.next(),
-                        // );
-                        // self.add_node(node);
-                        return false;
-                    }
-                }
-                ElementState::Released => {
-                    match (self.input.dragging, self.mouse.pos) {
-                        (Some(DragKind::EdgeCreation(a)), Some(pos)) => {
-                            let pos = pos / self.camera.scale;
-                            let pos3 = pos.extend(0.0);
-                            if let Some((b, _)) = self
-                                .node_pipeline
-                                .nodes
-                                .iter()
-                                .enumerate()
-                                .find(|(_, node)| node.intersects(&pos3))
-                            {
-                                let edge = Edge::from_nodes(
-                                    (&self.node_pipeline.nodes[a as usize], a),
-                                    (&self.node_pipeline.nodes[b], b as u32),
-                                    vec4(0.0, 1.0, 0.0, 1.0),
-                                    10.0,
-                                );
-                                self.edge_pipeline.add_edge(edge, &self.queue);
-                            }
-                        }
-                        _ => (),
-                    }
-
-                    self.set_dragging(None);
-                }
+                ElementState::Pressed => if let Some(pos) = &self.mouse.pos {},
+                ElementState::Released => {}
             },
             WindowEvent::MouseWheel { delta, phase, .. } => {
                 let y = match delta {
@@ -263,14 +170,6 @@ impl State {
                 self.input
                     .modifier_state
                     .set(ModifiersState::SHIFT, pressed);
-                if !pressed {
-                    self.input.dragging = None;
-                } else {
-                    self.input.dragging = self.input.dragging.map(|drag| match drag {
-                        DragKind::Node(node) => DragKind::EdgeCreation(node),
-                        other => other,
-                    });
-                }
             }
             WindowEvent::KeyboardInput {
                 input:
@@ -326,41 +225,10 @@ impl State {
 
     pub fn device_input(&mut self, event: &DeviceEvent) -> bool {
         match event {
-            DeviceEvent::MouseMotion { delta } => {
-                match self.input.dragging {
-                    Some(DragKind::Node(node)) => {
-                        self.node_pipeline.nodes[node as usize].position.x +=
-                            delta.0 as f32 * SCREEN_SCALE * (1. / self.camera.scale);
-                        self.node_pipeline.nodes[node as usize].position.y += -delta.1 as f32
-                        * SCREEN_SCALE
-                        // * (self.camera.height / self.camera.width)
-                        * (1. / self.camera.scale);
-                        self.node_pipeline.update_node(node, &self.queue);
-                        self.physics.objs[node as usize].x =
-                            self.node_pipeline.nodes[node as usize].position.x;
-                        self.physics.objs[node as usize].y =
-                            self.node_pipeline.nodes[node as usize].position.y;
-                    }
-                    _ => (),
-                }
-            }
+            DeviceEvent::MouseMotion { delta } => {}
             _ => (),
         }
         false
-    }
-
-    pub fn add_node(&mut self, node: Node) {
-        let idx = self.node_pipeline.nodes.len();
-        self.physics.objs.push(physics::Object::from_node(
-            idx as u32,
-            &node,
-            DEFAULT_STRENGTH,
-        ));
-        self.node_pipeline.add_node(node, &self.queue)
-    }
-
-    pub fn add_edge(&mut self, edge: Edge) {
-        self.edge_pipeline.add_edge(edge, &self.queue);
     }
 
     pub fn set_dragging(&mut self, dragging: Option<DragKind>) {
@@ -388,21 +256,7 @@ impl State {
     }
 
     pub fn update(&mut self) {
-        self.physics.tick(
-            self.input.dragging.and_then(|drag| match drag {
-                DragKind::Node(node) => Some(node),
-                _ => None,
-            }),
-            &self.edge_pipeline.edges,
-            &self.edge_pipeline.edge_map,
-        );
-        self.physics.apply(
-            self.node_pipeline.nodes.as_mut_slice(),
-            &mut self.edge_pipeline.edges,
-            &self.edge_pipeline.edge_map,
-        );
-        self.node_pipeline.write(&self.queue);
-        self.edge_pipeline.write(&self.queue);
+        self.physics.update(&self.queue);
     }
 
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
@@ -448,10 +302,8 @@ impl State {
                     stencil_ops: None,
                 }),
             });
-
-            self.edge_pipeline
-                .render(&self.camera.bind_group, &mut render_pass);
-            self.node_pipeline
+            self.physics
+                .cloth
                 .render(&self.camera.bind_group, &mut render_pass);
         }
 

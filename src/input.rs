@@ -11,10 +11,7 @@ bitflags::bitflags! {
 }
 
 #[derive(Copy, Clone, Debug)]
-pub enum DragKind {
-    Node(u32),
-    EdgeCreation(u32),
-}
+pub enum DragKind {}
 
 pub struct InputState {
     pub dragging: Option<DragKind>,

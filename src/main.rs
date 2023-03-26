@@ -1,4 +1,4 @@
-use force_graph_wgpu::run;
+use tp_twitter::run;
 
 fn main() {
     run();

@@ -1,10 +1,8 @@
 pub mod camera;
-pub mod edge;
+pub mod cloth;
 pub mod input;
 pub mod main_state;
 pub mod mouse;
-pub mod node;
-pub mod physics;
 pub mod texture;
 
 #[cfg(feature = "debug")]
@@ -99,12 +97,36 @@ pub fn clip_vec_to_screen_vec(
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
-pub struct Vertex {
+pub struct Vertex2 {
     pub position: [f32; 2],
 }
 
+impl Default for Vertex2 {
+    fn default() -> Self {
+        Self {
+            position: Default::default(),
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Pod, Zeroable)]
+pub struct Vertex {
+    pub position: [f32; 3],
+    // _pad: f32,
+}
+
+impl Default for Vertex {
+    fn default() -> Self {
+        Self {
+            position: Default::default(),
+            // _pad: 0.0,
+        }
+    }
+}
+
 impl Vertex {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 1] = wgpu::vertex_attr_array![0=>Float32x2];
+    const ATTRIBUTES: [wgpu::VertexAttribute; 1] = wgpu::vertex_attr_array![0=>Float32x3];
     pub fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
         wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
@@ -231,15 +253,12 @@ pub fn run() {
 
                 #[cfg(not(target_arch = "wasm32"))]
                 {
+                    // std::thread::sleep(std::time::Duration::from_millis(100));
                     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
                     if now.as_millis() - start > 1000 {
                         let fps = frame as f64 / ((now.as_millis() - start) as f64 / 1000.0);
                         // window.set_title(&format!("{:.1$} fps", fps, 3));
-                        window.set_title(&format!(
-                            "{} fps — Nodes {}",
-                            fps,
-                            state.node_pipeline.nodes.len()
-                        ));
+                        window.set_title(&format!("{} fps — ", fps,));
                     }
                 }
             }
