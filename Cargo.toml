@@ -15,6 +15,7 @@ cgmath = "0.18.0"
 console_log = "0.2.0"
 env_logger = "0.10.0"
 image = { version = "0.24.6", features = ["jpeg", "png"] }
+instant = "0.1.12"
 log = "0.4.17"
 pollster = "0.2.5"
 simple_logger = "4.0.0"

@@ -2,6 +2,7 @@ pub mod camera;
 pub mod cloth;
 pub mod input;
 pub mod main_state;
+pub mod memo;
 pub mod mouse;
 pub mod texture;
 
@@ -54,6 +55,8 @@ pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
     0.0, 0.0, 0.5, 0.0,
     0.0, 0.0, 0.5, 1.0,
 );
+
+pub const SAFE_FRAC_PI_2: f32 = std::f32::consts::FRAC_PI_2 - 0.0001;
 
 pub fn screen_space_to_clip_space(
     width: f32,
@@ -186,6 +189,7 @@ pub fn run() {
     }
 
     let mut state = pollster::block_on(State::new(&window));
+    let mut last_render_time = instant::Instant::now();
 
     event_loop.run(move |event, _, control_flow| {
         #[cfg(not(target_arch = "wasm32"))]
@@ -196,15 +200,6 @@ pub fn run() {
                 .as_millis();
         }
 
-        // if !matches!(
-        //     event,
-        //     Event::RedrawRequested(_)
-        //         | Event::MainEventsCleared
-        //         | Event::RedrawEventsCleared
-        //         | Event::NewEvents(StartCause::Poll)
-        // ) {
-        //     info!("EVENT: {:#?}", event);
-        // }
         match event {
             Event::DeviceEvent { event, .. } => {
                 state.device_input(&event);
@@ -237,7 +232,12 @@ pub fn run() {
                 }
             }
             Event::RedrawRequested(window_id) if window_id == window.id() => {
-                state.update();
+                let now = instant::Instant::now();
+                let dt = now - last_render_time;
+
+                last_render_time = now;
+                state.update(dt);
+
                 match state.render() {
                     Ok(_) => {}
                     // Reconfigure the surface if it's lost or outdated

@@ -1,200 +1,213 @@
-use bytemuck::{Pod, Zeroable};
-use cgmath::{Matrix4, SquareMatrix};
-use wgpu::util::DeviceExt;
+use std::time::Duration;
 
-use crate::{input::MovementState, OPENGL_TO_WGPU_MATRIX};
+use bytemuck::{Pod, Zeroable};
+use cgmath::{perspective, InnerSpace, Matrix4, Point3, Rad, SquareMatrix, Vector3};
+use wgpu::util::DeviceExt;
+use winit::{
+    dpi::PhysicalPosition,
+    event::{ElementState, MouseScrollDelta, VirtualKeyCode},
+};
+
+use crate::{input::MovementState, OPENGL_TO_WGPU_MATRIX, SAFE_FRAC_PI_2};
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, Pod, Zeroable)]
-pub struct CameraRaw {
-    matrix: [[f32; 4]; 4],
-    dimensions: [f32; 2],
-    scale: f32,
-    // ugh
-    _pad: f32,
+pub struct CameraUniform {
+    view_position: [f32; 4],
+    view_proj: [[f32; 4]; 4],
+}
+
+impl CameraUniform {
+    pub fn new() -> Self {
+        Self {
+            view_position: [0.0; 4],
+            view_proj: cgmath::Matrix4::identity().into(),
+        }
+    }
+
+    // UPDATED!
+    pub fn update_view_proj(&mut self, camera: &Camera, projection: &Projection) {
+        self.view_position = camera.position.to_homogeneous().into();
+        self.view_proj = (projection.calc_matrix() * camera.calc_matrix()).into()
+    }
 }
 
 pub struct Camera {
-    pub matrix: Matrix4<f32>,
-
-    buffer: wgpu::Buffer,
-    pub bind_group: wgpu::BindGroup,
-    pub translate: cgmath::Vector3<f32>,
-    pub scale: f32,
-    pub height: f32,
-    pub width: f32,
+    pub position: Point3<f32>,
+    yaw: Rad<f32>,
+    pitch: Rad<f32>,
 }
 
 impl Camera {
-    pub fn make_matrix(
-        width: f32,
-        height: f32,
-        translate: &cgmath::Matrix4<f32>,
-        scale: &cgmath::Matrix4<f32>,
-    ) -> cgmath::Matrix4<f32> {
-        // OPENGL_TO_WGPU_MATRIX
-        //     * cgmath::ortho(
-        //         -width / 2.0,
-        //         width / 2.0,
-        //         -height / 2.0,
-        //         height / 2.0,
-        //         0.1,
-        //         100.0,
-        //     )
-        //     * translate.invert().unwrap()
-        //     * scale
-        OPENGL_TO_WGPU_MATRIX
-            * cgmath::perspective(cgmath::Deg(45.0), width / height, 0.1, 100.0)
-            * cgmath::Matrix4::look_at_rh(
-                // translate.invert().unwrap(),
-                (0.0, 0.0, 30.0).into(),
-                (5.0, 0.0, 0.0).into(),
-                (0.0, 1.0, 0.0).into(),
-            )
-            * scale
+    pub fn new<V, Y, P>(position: V, yaw: Y, pitch: P) -> Self
+    where
+        V: Into<Point3<f32>>,
+        Y: Into<Rad<f32>>,
+        P: Into<Rad<f32>>,
+    {
+        Self {
+            position: position.into(),
+            yaw: yaw.into(),
+            pitch: pitch.into(),
+        }
     }
 
-    pub fn update_scale(&mut self, queue: &wgpu::Queue, scale: f32) {
-        self.scale = scale.clamp(0.01, 256.0);
-        self.matrix = Self::make_matrix(
-            self.width,
-            self.height,
-            &cgmath::Matrix4::from_translation(self.translate.clone()),
-            &cgmath::Matrix4::from_scale(self.scale),
-        );
-        queue.write_buffer(
-            &self.buffer,
-            0,
-            bytemuck::cast_slice(&[Self::to_raw(
-                self.matrix.clone(),
-                self.width,
-                self.height,
-                self.scale,
-            )]),
-        );
-    }
+    pub fn calc_matrix(&self) -> Matrix4<f32> {
+        let (sin_pitch, cos_pitch) = self.pitch.0.sin_cos();
+        let (sin_yaw, cos_yaw) = self.yaw.0.sin_cos();
 
-    pub fn update_translate(&mut self, queue: &wgpu::Queue, translate: cgmath::Vector3<f32>) {
-        self.translate = translate;
-        self.matrix = Self::make_matrix(
-            self.width,
-            self.height,
-            &cgmath::Matrix4::from_translation(self.translate.clone()),
-            &cgmath::Matrix4::from_scale(self.scale),
-        );
-        queue.write_buffer(
-            &self.buffer,
-            0,
-            bytemuck::cast_slice(&[Self::to_raw(
-                self.matrix.clone(),
-                self.width,
-                self.height,
-                self.scale,
-            )]),
-        );
-    }
-
-    pub fn update(&mut self, queue: &wgpu::Queue, movement: MovementState) {
-        let mut translate = self.translate;
-        if movement.contains(MovementState::W) {
-            translate.z += 1.0;
-            // translate.y += 1.0;
-        }
-        if movement.contains(MovementState::A) {
-            translate.x -= 1.0;
-        }
-        if movement.contains(MovementState::S) {
-            // translate.y -= 1.0;
-            translate.z -= 1.0;
-        }
-        if movement.contains(MovementState::D) {
-            translate.x += 1.0;
-        }
-        self.update_translate(&queue, translate);
-    }
-
-    pub fn new(
-        translate: cgmath::Vector3<f32>,
-        width: f32,
-        height: f32,
-        scale: f32,
-        device: &wgpu::Device,
-    ) -> (Self, wgpu::BindGroupLayout) {
-        let view_proj = Self::make_matrix(
-            width,
-            height,
-            &cgmath::Matrix4::from_translation(translate.clone()),
-            &cgmath::Matrix4::from_scale(scale),
-        );
-
-        let camera_raw = Self::to_raw(view_proj.clone(), width, height, scale);
-        let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Camera Buffer"),
-            contents: bytemuck::cast_slice(&[camera_raw]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let camera_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::all(),
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-                label: Some("camera_bind_group_layout"),
-            });
-
-        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &camera_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: camera_buffer.as_entire_binding(),
-            }],
-            label: Some("camera_bind_group"),
-        });
-
-        (
-            Self {
-                translate,
-                scale,
-                height,
-                width,
-                matrix: view_proj,
-                buffer: camera_buffer,
-                bind_group: camera_bind_group,
-            },
-            camera_bind_group_layout,
+        Matrix4::look_to_rh(
+            self.position,
+            Vector3::new(cos_pitch * cos_yaw, sin_pitch, cos_pitch * sin_yaw).normalize(),
+            Vector3::unit_y(),
         )
     }
+}
 
-    pub fn resize(&mut self, width: f32, height: f32, queue: &wgpu::Queue) {
-        self.width = width;
-        self.height = height;
-        self.matrix = Self::make_matrix(
-            width,
-            height,
-            &cgmath::Matrix4::from_translation(self.translate.clone()),
-            &cgmath::Matrix4::from_scale(self.scale),
-        );
-        queue.write_buffer(
-            &self.buffer,
-            0,
-            bytemuck::cast_slice(&[Self::to_raw(self.matrix.clone(), width, height, self.scale)]),
-        );
+pub struct Projection {
+    aspect: f32,
+    fovy: Rad<f32>,
+    znear: f32,
+    zfar: f32,
+}
+
+impl Projection {
+    pub fn new<F: Into<Rad<f32>>>(width: u32, height: u32, fovy: F, znear: f32, zfar: f32) -> Self {
+        Self {
+            aspect: width as f32 / height as f32,
+            fovy: fovy.into(),
+            znear,
+            zfar,
+        }
     }
 
-    fn to_raw(matrix: Matrix4<f32>, width: f32, height: f32, scale: f32) -> CameraRaw {
-        CameraRaw {
-            matrix: matrix.into(),
-            // dimensions: [width * SCREEN_SCALE, height * SCREEN_SCALE],
-            dimensions: [width, height],
-            scale,
-            _pad: 0.0,
+    pub fn resize(&mut self, width: u32, height: u32) {
+        self.aspect = width as f32 / height as f32;
+    }
+
+    pub fn calc_matrix(&self) -> Matrix4<f32> {
+        OPENGL_TO_WGPU_MATRIX * perspective(self.fovy, self.aspect, self.znear, self.zfar)
+    }
+}
+#[derive(Debug)]
+pub struct CameraController {
+    amount_left: f32,
+    amount_right: f32,
+    amount_forward: f32,
+    amount_backward: f32,
+    amount_up: f32,
+    amount_down: f32,
+    rotate_horizontal: f32,
+    rotate_vertical: f32,
+    scroll: f32,
+    speed: f32,
+    sensitivity: f32,
+}
+
+impl CameraController {
+    pub fn new(speed: f32, sensitivity: f32) -> Self {
+        Self {
+            amount_left: 0.0,
+            amount_right: 0.0,
+            amount_forward: 0.0,
+            amount_backward: 0.0,
+            amount_up: 0.0,
+            amount_down: 0.0,
+            rotate_horizontal: 0.0,
+            rotate_vertical: 0.0,
+            scroll: 0.0,
+            speed,
+            sensitivity,
+        }
+    }
+
+    pub fn process_keyboard(&mut self, key: VirtualKeyCode, state: ElementState) -> bool {
+        let amount = if state == ElementState::Pressed {
+            1.0
+        } else {
+            0.0
+        };
+        match key {
+            VirtualKeyCode::W | VirtualKeyCode::Up => {
+                self.amount_forward = amount;
+                true
+            }
+            VirtualKeyCode::S | VirtualKeyCode::Down => {
+                self.amount_backward = amount;
+                true
+            }
+            VirtualKeyCode::A | VirtualKeyCode::Left => {
+                self.amount_left = amount;
+                true
+            }
+            VirtualKeyCode::D | VirtualKeyCode::Right => {
+                self.amount_right = amount;
+                true
+            }
+            VirtualKeyCode::Space => {
+                self.amount_up = amount;
+                true
+            }
+            VirtualKeyCode::LShift => {
+                self.amount_down = amount;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    pub fn process_mouse(&mut self, mouse_dx: f64, mouse_dy: f64) {
+        self.rotate_horizontal = mouse_dx as f32;
+        self.rotate_vertical = mouse_dy as f32;
+    }
+
+    pub fn process_scroll(&mut self, delta: &MouseScrollDelta) {
+        self.scroll = match delta {
+            // I'm assuming a line is about 100 pixels
+            MouseScrollDelta::LineDelta(_, scroll) => -scroll * 0.5,
+            MouseScrollDelta::PixelDelta(PhysicalPosition { y: scroll, .. }) => -*scroll as f32,
+        };
+    }
+
+    pub fn update_camera(&mut self, camera: &mut Camera, dt: Duration) {
+        let dt = dt.as_secs_f32();
+
+        // Move forward/backward and left/right
+        let (yaw_sin, yaw_cos) = camera.yaw.0.sin_cos();
+        let forward = Vector3::new(yaw_cos, 0.0, yaw_sin).normalize();
+        let right = Vector3::new(-yaw_sin, 0.0, yaw_cos).normalize();
+        camera.position += forward * (self.amount_forward - self.amount_backward) * self.speed * dt;
+        camera.position += right * (self.amount_right - self.amount_left) * self.speed * dt;
+
+        // Move in/out (aka. "zoom")
+        // Note: this isn't an actual zoom. The camera's position
+        // changes when zooming. I've added this to make it easier
+        // to get closer to an object you want to focus on.
+        let (pitch_sin, pitch_cos) = camera.pitch.0.sin_cos();
+        let scrollward =
+            Vector3::new(pitch_cos * yaw_cos, pitch_sin, pitch_cos * yaw_sin).normalize();
+        camera.position += scrollward * self.scroll * self.speed * self.sensitivity * dt;
+        self.scroll = 0.0;
+
+        // Move up/down. Since we don't use roll, we can just
+        // modify the y coordinate directly.
+        camera.position.y += (self.amount_up - self.amount_down) * self.speed * dt;
+
+        // Rotate
+        camera.yaw += Rad(self.rotate_horizontal) * self.sensitivity * dt;
+        camera.pitch += Rad(-self.rotate_vertical) * self.sensitivity * dt;
+
+        // If process_mouse isn't called every frame, these values
+        // will not get set to zero, and the camera will rotate
+        // when moving in a non cardinal direction.
+        self.rotate_horizontal = 0.0;
+        self.rotate_vertical = 0.0;
+
+        // Keep the camera's angle from going too high/low.
+        if camera.pitch < -Rad(SAFE_FRAC_PI_2) {
+            camera.pitch = -Rad(SAFE_FRAC_PI_2);
+        } else if camera.pitch > Rad(SAFE_FRAC_PI_2) {
+            camera.pitch = Rad(SAFE_FRAC_PI_2);
         }
     }
 }

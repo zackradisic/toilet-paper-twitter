@@ -1,5 +1,6 @@
 use cgmath::{vec4, Rotation3, Vector4};
 use log::info;
+use wgpu::util::DeviceExt;
 use winit::{
     event::{
         DeviceEvent, ElementState, KeyboardInput, ModifiersState, MouseButton, VirtualKeyCode,
@@ -9,11 +10,12 @@ use winit::{
 };
 
 use crate::{
-    camera::Camera,
+    camera::{self, Camera, CameraController, CameraUniform, Projection},
     cloth::Physics,
     convert_to_srgba,
     debug::Debug,
     input::{DragKind, InputState, MovementState},
+    memo::Memoized,
     mouse::Mouse,
     texture::Texture,
     ColorGenerator, SAMPLE_COUNT, SCREEN_SCALE,
@@ -31,6 +33,11 @@ pub struct State {
     pub physics: Physics,
 
     pub camera: Camera,
+    pub camera_controller: Memoized<CameraController>,
+    pub camera_uniform: CameraUniform,
+    pub camera_buffer: wgpu::Buffer,
+    pub camera_bind_group: wgpu::BindGroup,
+    pub projection: Projection,
 
     #[cfg(feature = "debug")]
     pub debug: Debug,
@@ -90,17 +97,42 @@ impl State {
         };
         surface.configure(&device, &config);
 
-        let (w, h) = (800.0, 600.0);
-        let (camera, camera_bind_group_layout) =
-            Camera::new(cgmath::vec3(0.0, 0.0, 1.0), w, h, 1.0, &device);
+        let camera = Camera::new((0.0, 0.0, 10.0), cgmath::Deg(-90.0), cgmath::Deg(-20.0));
+        let projection =
+            camera::Projection::new(config.width, config.height, cgmath::Deg(45.0), 0.1, 100.0);
+        let camera_controller = CameraController::new(4.0 * 2.0, 4.0 * 2.0);
+        let mut camera_uniform = CameraUniform::new();
+        camera_uniform.update_view_proj(&camera, &projection);
+        let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Camera Buffer"),
+            contents: bytemuck::cast_slice(&[camera_uniform]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let camera_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+                label: Some("camera_bind_group_layout"),
+            });
 
-        let depth_texture = Texture::create(
-            &device,
-            &config,
-            Some(Texture::DEPTH_FORMAT),
-            "Depth",
-            SAMPLE_COUNT,
-        );
+        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &camera_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: camera_buffer.as_entire_binding(),
+            }],
+            label: Some("camera_bind_group"),
+        });
+
+        let depth_texture = Texture::create_depth_texture(&device, &config, SAMPLE_COUNT, "Depth");
         let msaa_texture = Texture::create(&device, &config, None, "MSAA", SAMPLE_COUNT);
 
         let bg = convert_to_srgba(vec4(20.0 / 256.0, 20.0 / 256., 28.0 / 256., 1.0));
@@ -115,6 +147,11 @@ impl State {
             msaa_texture,
 
             camera,
+            camera_controller: camera_controller.into(),
+            camera_uniform,
+            camera_buffer,
+            camera_bind_group,
+            projection,
 
             #[cfg(feature = "debug")]
             debug: Debug::new(&device),
@@ -128,34 +165,21 @@ impl State {
 
     pub fn input(&mut self, event: &WindowEvent) -> bool {
         match event {
-            WindowEvent::MouseInput {
-                state,
-                button: MouseButton::Left,
-                ..
-            } => match state {
-                ElementState::Pressed => if let Some(pos) = &self.mouse.pos {},
-                ElementState::Released => {}
-            },
-            WindowEvent::MouseWheel { delta, phase, .. } => {
-                let y = match delta {
-                    winit::event::MouseScrollDelta::LineDelta(_, y) => *y as f64,
-                    winit::event::MouseScrollDelta::PixelDelta(pos) => pos.y / 100.,
-                };
-
-                self.camera
-                    .update_scale(&self.queue, self.camera.scale + y as f32);
+            WindowEvent::MouseInput { state, button, .. } => {
+                self.input.movement_state.set(
+                    MovementState::MOUSE_PRESSED,
+                    *state == ElementState::Pressed,
+                );
+                true
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                self.camera_controller.process_scroll(delta);
+                true
             }
             WindowEvent::CursorLeft { .. } => {
                 self.mouse.last_pos = self.mouse.pos.unwrap_or((0.0, 0.0).into());
                 self.mouse.pos = None;
-            }
-            WindowEvent::CursorMoved { position, .. } => {
-                let mut vec: cgmath::Vector2<f32> = (position.x as f32, position.y as f32).into();
-                vec.x -= self.camera.width / 2.0;
-                vec.y -= self.camera.height / 2.0;
-                // vec.x *= 2.0;
-                vec.y *= -1.0;
-                self.mouse.pos = Some(vec);
+                true
             }
             WindowEvent::KeyboardInput {
                 input:
@@ -170,6 +194,7 @@ impl State {
                 self.input
                     .modifier_state
                     .set(ModifiersState::SHIFT, pressed);
+                true
             }
             WindowEvent::KeyboardInput {
                 input:
@@ -182,6 +207,7 @@ impl State {
             } => {
                 let pressed = matches!(element_state, ElementState::Pressed);
                 self.input.modifier_state.set(ModifiersState::ALT, pressed);
+                true
             }
             WindowEvent::KeyboardInput {
                 input:
@@ -191,41 +217,61 @@ impl State {
                         ..
                     },
                 ..
-            } => match key {
-                VirtualKeyCode::W => {
-                    self.input.movement_state.set(
-                        MovementState::W,
-                        matches!(element_state, ElementState::Pressed),
-                    );
+            } => {
+                if self
+                    .camera_controller
+                    .process_keyboard(*key, *element_state)
+                {
+                    return true;
                 }
-                VirtualKeyCode::A => {
-                    self.input.movement_state.set(
-                        MovementState::A,
-                        matches!(element_state, ElementState::Pressed),
-                    );
+
+                match key {
+                    VirtualKeyCode::W => {
+                        self.input.movement_state.set(
+                            MovementState::W,
+                            matches!(element_state, ElementState::Pressed),
+                        );
+                        true
+                    }
+                    VirtualKeyCode::A => {
+                        self.input.movement_state.set(
+                            MovementState::A,
+                            matches!(element_state, ElementState::Pressed),
+                        );
+                        true
+                    }
+                    VirtualKeyCode::S => {
+                        self.input.movement_state.set(
+                            MovementState::S,
+                            matches!(element_state, ElementState::Pressed),
+                        );
+                        true
+                    }
+                    VirtualKeyCode::D => {
+                        self.input.movement_state.set(
+                            MovementState::D,
+                            matches!(element_state, ElementState::Pressed),
+                        );
+                        true
+                    }
+                    _ => false,
                 }
-                VirtualKeyCode::S => {
-                    self.input.movement_state.set(
-                        MovementState::S,
-                        matches!(element_state, ElementState::Pressed),
-                    );
-                }
-                VirtualKeyCode::D => {
-                    self.input.movement_state.set(
-                        MovementState::D,
-                        matches!(element_state, ElementState::Pressed),
-                    );
-                }
-                _ => (),
-            },
-            _ => (),
+            }
+            _ => false,
         }
-        false
     }
 
     pub fn device_input(&mut self, event: &DeviceEvent) -> bool {
         match event {
-            DeviceEvent::MouseMotion { delta } => {}
+            DeviceEvent::MouseMotion { delta } => {
+                if self
+                    .input
+                    .movement_state
+                    .contains(MovementState::MOUSE_PRESSED)
+                {
+                    self.camera_controller.process_mouse(delta.0, delta.1)
+                }
+            }
             _ => (),
         }
         false
@@ -236,27 +282,34 @@ impl State {
     }
 
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
+        // UPDATED!
         if new_size.width > 0 && new_size.height > 0 {
+            self.projection.resize(new_size.width, new_size.height);
             self.size = new_size;
             self.config.width = new_size.width;
             self.config.height = new_size.height;
             self.surface.configure(&self.device, &self.config);
-            self.depth_texture = Texture::create(
+            self.depth_texture = Texture::create_depth_texture(
                 &self.device,
                 &self.config,
-                Some(Texture::DEPTH_FORMAT),
-                "Depth",
                 SAMPLE_COUNT,
+                "depth_texture",
             );
-            self.msaa_texture =
-                Texture::create(&self.device, &self.config, None, "MSAA", SAMPLE_COUNT);
-            self.camera
-                .resize(new_size.width as f32, new_size.height as f32, &self.queue);
-        };
+        }
     }
 
-    pub fn update(&mut self) {
-        self.physics.update(&self.queue);
+    pub fn update(&mut self, dt: std::time::Duration) {
+        if let Some(mut camera_controller) = self.camera_controller.handle_updated() {
+            camera_controller.update_camera(&mut self.camera, dt);
+            self.camera_uniform
+                .update_view_proj(&self.camera, &self.projection);
+            self.queue.write_buffer(
+                &self.camera_buffer,
+                0,
+                bytemuck::cast_slice(&[self.camera_uniform]),
+            );
+        }
+        self.physics.update(&self.queue, dt);
     }
 
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
@@ -302,9 +355,10 @@ impl State {
                     stencil_ops: None,
                 }),
             });
+
             self.physics
                 .cloth
-                .render(&self.camera.bind_group, &mut render_pass);
+                .render(&self.camera_bind_group, &mut render_pass);
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));

@@ -7,6 +7,7 @@ bitflags::bitflags! {
         const A = 0b00000010;
         const S = 0b00000100;
         const D = 0b00001000;
+        const MOUSE_PRESSED = 0b00010000;
     }
 }
 

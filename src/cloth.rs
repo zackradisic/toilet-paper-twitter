@@ -58,10 +58,11 @@ impl Physics {
         }
     }
 
-    pub fn update(&mut self, queue: &wgpu::Queue) {
-        let new_time = time_secs();
-        let frame_time = new_time - self.current_time;
-        self.current_time = new_time;
+    pub fn update(&mut self, queue: &wgpu::Queue, dt: std::time::Duration) {
+        // let new_time = time_secs();
+        // let frame_time = new_time - self.current_time;
+        // self.current_time = new_time;
+        let frame_time = dt.as_secs_f64();
 
         let mut updated = false;
 

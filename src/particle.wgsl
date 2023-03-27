@@ -1,7 +1,6 @@
 struct Camera {
+    view_pos: vec4<f32>,
     view_proj: mat4x4<f32>,
-    dimensions: vec2<f32>,
-    scale: f32,
 };
 
 @binding(0) @group(0) var<uniform> camera: Camera;
@@ -40,21 +39,12 @@ var t_diffuse: texture_2d<f32>;
 var s_diffuse: sampler;
 
 @fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let ret = textureSample(t_diffuse, s_diffuse, in.tex_coords);
+fn fs_main(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
+    var ret: vec4<f32> = textureSample(t_diffuse, s_diffuse, in.tex_coords);
+    if (!front_facing) {
+        ret = vec4<f32>(1.0, 1.0, 1.0, 1.0);
+    }
     let world_normal = normalize(vec3<f32>(50.0, 6.0, 50.0));
     let diffuse_strength = max(dot(in.normal, world_normal), 0.8);
     return ret * diffuse_strength;
 }
-
-// @fragment
-// fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-//     let ret = textureSample(t_diffuse, s_diffuse, in.tex_coords);
-//     let camera_pos = vec3<f32>(0.0, 0.0, 30.0);
-//     let look_pos = vec3<f32>(5.0, 0.0, 0.0);
-//     let world_dir = look_pos - camera_pos;
-//     // let world_normal = normalize(vec3<f32>(50.0, 6.0, 50.0));
-//     let world_normal = normalize(world_dir);
-//     let diffuse_strength = max(dot(in.normal, world_normal), 0.0) * 2.0;
-//     return (ret * 0.1) * diffuse_strength;
-// }
