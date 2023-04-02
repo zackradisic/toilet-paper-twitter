@@ -1,4 +1,4 @@
-use cgmath::{vec4, Rotation3, Vector4};
+use cgmath::{vec3, vec4, InnerSpace, Rotation3, SquareMatrix, Transform, Vector4};
 use log::info;
 use wgpu::util::DeviceExt;
 use winit::{
@@ -17,6 +17,8 @@ use crate::{
     input::{DragKind, InputState, MovementState},
     memo::Memoized,
     mouse::Mouse,
+    ray::{Ray, RayPipeline},
+    screen_space_to_clip_space,
     texture::Texture,
     ColorGenerator, SAMPLE_COUNT, SCREEN_SCALE,
 };
@@ -38,6 +40,8 @@ pub struct State {
     pub camera_buffer: wgpu::Buffer,
     pub camera_bind_group: wgpu::BindGroup,
     pub projection: Projection,
+
+    pub ray_pipeline: RayPipeline,
 
     #[cfg(feature = "debug")]
     pub debug: Debug,
@@ -97,11 +101,12 @@ impl State {
         };
         surface.configure(&device, &config);
 
-        let camera = Camera::new((0.0, 0.0, 10.0), cgmath::Deg(-90.0), cgmath::Deg(-20.0));
+        // let camera = Camera::new((0.0, 0.0, 10.0), cgmath::Deg(-90.0), cgmath::Deg(-20.0));
+        let camera = Camera::new((0.0, 0.0, 00.0), cgmath::Deg(-90.0), cgmath::Deg(-20.0));
         let projection =
             camera::Projection::new(config.width, config.height, cgmath::Deg(45.0), 0.1, 100.0);
-        let camera_controller = CameraController::new(4.0 * 2.0, 4.0 * 2.0);
-        let mut camera_uniform = CameraUniform::new();
+        let camera_controller = CameraController::new(4.0 * 2.0, 4.0 * 3.0);
+        let mut camera_uniform = CameraUniform::new(config.width as f32, config.height as f32);
         camera_uniform.update_view_proj(&camera, &projection);
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Camera Buffer"),
@@ -136,6 +141,16 @@ impl State {
         let msaa_texture = Texture::create(&device, &config, None, "MSAA", SAMPLE_COUNT);
 
         let bg = convert_to_srgba(vec4(20.0 / 256.0, 20.0 / 256., 28.0 / 256., 1.0));
+        // let bg = convert_to_srgba(vec4(255.0 / 256.0, 255.0 / 256., 255.0 / 256., 1.0));
+
+        let ray_pipeline = RayPipeline::new(
+            &device,
+            &queue,
+            config.format,
+            &camera,
+            &projection,
+            &config,
+        );
 
         Self {
             physics: Physics::new(&device, &queue, format, &camera_bind_group_layout),
@@ -152,6 +167,8 @@ impl State {
             camera_buffer,
             camera_bind_group,
             projection,
+
+            ray_pipeline,
 
             #[cfg(feature = "debug")]
             debug: Debug::new(&device),
@@ -179,6 +196,19 @@ impl State {
             WindowEvent::CursorLeft { .. } => {
                 self.mouse.last_pos = self.mouse.pos.unwrap_or((0.0, 0.0).into());
                 self.mouse.pos = None;
+                true
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                let vec: cgmath::Vector2<f32> = (
+                    position.x as f32 / SCREEN_SCALE,
+                    position.y as f32 / SCREEN_SCALE,
+                )
+                    .into();
+                // vec.x -= self.config.width as f32 / 2.0;
+                // vec.y -= self.config.height as f32 / 2.0;
+                // vec.x *= 2.0;
+                // vec.y *= -1.0;
+                self.mouse.pos = Some(vec);
                 true
             }
             WindowEvent::KeyboardInput {
@@ -263,6 +293,10 @@ impl State {
 
     pub fn device_input(&mut self, event: &DeviceEvent) -> bool {
         match event {
+            // DeviceEvent::Key(KeyboardInput {
+            //     virtual_keycode: Some(VirtualKeycode::),
+            //     ..
+            // }) => {}
             DeviceEvent::MouseMotion { delta } => {
                 if self
                     .input
@@ -272,6 +306,48 @@ impl State {
                     self.camera_controller.process_mouse(delta.0, delta.1)
                 }
             }
+            DeviceEvent::Button { state, .. } => match state {
+                ElementState::Pressed => {
+                    self.input
+                        .movement_state
+                        .set(MovementState::MOUSE_PRESSED, true);
+
+                    // let pos = screen_space_to_clip_space(
+                    //     self.config.width as f32 / 2.0,
+                    //     self.config.height as f32 / 2.0,
+                    //     &self.mouse.pos.expect("Should be good"),
+                    // );
+                    let mouse_pos = self.mouse.pos.unwrap_or((0.0, 0.0).into());
+                    let pos = vec3(
+                        (2.0 * (mouse_pos.x / (self.config.width as f32 / SCREEN_SCALE))) - 1.0,
+                        1.0 - (2.0 * (mouse_pos.y / (self.config.height as f32 / SCREEN_SCALE))),
+                        0.0,
+                    );
+                    println!("NICE: {:?}", pos);
+
+                    let matrix = self.camera.calc_matrix().invert().unwrap();
+                    // let matrix = self.camera.calc_matrix();
+
+                    let origin = vec3(
+                        self.camera.position.x,
+                        self.camera.position.y,
+                        self.camera.position.z,
+                    );
+                    let look_at = self.camera.look_at_vec();
+                    let ray_dir = vec3(pos.x, pos.y, 0.0) + look_at;
+                    // let ray_dir = matrix.transform_vector(ray_dir);
+                    let ray = Ray::new(origin, ray_dir.normalize());
+
+                    println!("RAY {:?}", ray);
+                    let hit = self.physics.cloth.intersects(&ray, &matrix);
+                    println!("HIT {:?}", hit);
+                }
+                ElementState::Released => {
+                    self.input
+                        .movement_state
+                        .set(MovementState::MOUSE_PRESSED, false);
+                }
+            },
             _ => (),
         }
         false
@@ -299,16 +375,19 @@ impl State {
     }
 
     pub fn update(&mut self, dt: std::time::Duration) {
-        if let Some(mut camera_controller) = self.camera_controller.handle_updated() {
-            camera_controller.update_camera(&mut self.camera, dt);
-            self.camera_uniform
-                .update_view_proj(&self.camera, &self.projection);
-            self.queue.write_buffer(
-                &self.camera_buffer,
-                0,
-                bytemuck::cast_slice(&[self.camera_uniform]),
-            );
-        }
+        // if let Some(mut camera_controller) = self.camera_controller.handle_updated() {
+        self.camera_controller.update_camera(&mut self.camera, dt);
+        self.camera_uniform
+            .update_view_proj(&self.camera, &self.projection);
+        self.queue.write_buffer(
+            &self.camera_buffer,
+            0,
+            bytemuck::cast_slice(&[self.camera_uniform]),
+        );
+        // }
+
+        self.ray_pipeline
+            .update(&self.queue, &self.camera, &self.projection, &self.config);
         self.physics.update(&self.queue, dt);
     }
 
@@ -356,9 +435,11 @@ impl State {
                 }),
             });
 
-            self.physics
-                .cloth
-                .render(&self.camera_bind_group, &mut render_pass);
+            // self.physics
+            //     .cloth
+            //     .render(&self.camera_bind_group, &mut render_pass);
+
+            self.ray_pipeline.render(&mut render_pass);
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));

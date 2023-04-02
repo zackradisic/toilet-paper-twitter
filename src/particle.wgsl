@@ -45,6 +45,11 @@ fn fs_main(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loca
         ret = vec4<f32>(1.0, 1.0, 1.0, 1.0);
     }
     let world_normal = normalize(vec3<f32>(50.0, 6.0, 50.0));
-    let diffuse_strength = max(dot(in.normal, world_normal), 0.8);
-    return ret * diffuse_strength;
+    // let world_normal = normalize(vec3<f32>(camera.view_pos.xyz));
+    let diffuse_strength = max(dot(in.normal, world_normal), 0.5);
+    var color: vec3<f32> = vec3<f32>(ret.xyz) * diffuse_strength;
+    if (in.in_vertex_index <= 2u) {
+        color = vec3<f32>(1.0, 0.0, 0.0);
+    }
+    return vec4<f32>(color, 1.0);
 }

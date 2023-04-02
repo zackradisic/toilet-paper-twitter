@@ -4,6 +4,7 @@ pub mod input;
 pub mod main_state;
 pub mod memo;
 pub mod mouse;
+pub mod ray;
 pub mod texture;
 
 #[cfg(feature = "debug")]

@@ -15,13 +15,17 @@ use crate::{input::MovementState, OPENGL_TO_WGPU_MATRIX, SAFE_FRAC_PI_2};
 pub struct CameraUniform {
     view_position: [f32; 4],
     view_proj: [[f32; 4]; 4],
+    size: [f32; 2],
+    _pad: u64,
 }
 
 impl CameraUniform {
-    pub fn new() -> Self {
+    pub fn new(width: f32, height: f32) -> Self {
         Self {
             view_position: [0.0; 4],
             view_proj: cgmath::Matrix4::identity().into(),
+            size: [width, height],
+            _pad: 0,
         }
     }
 
@@ -34,8 +38,8 @@ impl CameraUniform {
 
 pub struct Camera {
     pub position: Point3<f32>,
-    yaw: Rad<f32>,
-    pitch: Rad<f32>,
+    pub yaw: Rad<f32>,
+    pub pitch: Rad<f32>,
 }
 
 impl Camera {
@@ -52,15 +56,16 @@ impl Camera {
         }
     }
 
-    pub fn calc_matrix(&self) -> Matrix4<f32> {
+    pub fn look_at_vec(&self) -> Vector3<f32> {
         let (sin_pitch, cos_pitch) = self.pitch.0.sin_cos();
         let (sin_yaw, cos_yaw) = self.yaw.0.sin_cos();
+        Vector3::new(cos_pitch * cos_yaw, sin_pitch, cos_pitch * sin_yaw)
+    }
 
-        Matrix4::look_to_rh(
-            self.position,
-            Vector3::new(cos_pitch * cos_yaw, sin_pitch, cos_pitch * sin_yaw).normalize(),
-            Vector3::unit_y(),
-        )
+    pub fn calc_matrix(&self) -> Matrix4<f32> {
+        let look_at_vec = self.look_at_vec();
+
+        Matrix4::look_to_rh(self.position, look_at_vec.normalize(), Vector3::unit_y())
     }
 }
 
@@ -127,6 +132,7 @@ impl CameraController {
         } else {
             0.0
         };
+        println!("LEFT SHIFT! {:?}", key);
         match key {
             VirtualKeyCode::W | VirtualKeyCode::Up => {
                 self.amount_forward = amount;
@@ -194,8 +200,10 @@ impl CameraController {
         camera.position.y += (self.amount_up - self.amount_down) * self.speed * dt;
 
         // Rotate
-        camera.yaw += Rad(self.rotate_horizontal) * self.sensitivity * dt;
-        camera.pitch += Rad(-self.rotate_vertical) * self.sensitivity * dt;
+        // camera.yaw += Rad(self.rotate_horizontal) * self.sensitivity * dt;
+        // camera.pitch += Rad(-self.rotate_vertical) * self.sensitivity * dt;
+        camera.yaw += Rad(self.rotate_horizontal) * dt;
+        camera.pitch += Rad(-self.rotate_vertical) * dt;
 
         // If process_mouse isn't called every frame, these values
         // will not get set to zero, and the camera will rotate

@@ -12,7 +12,9 @@ bitflags::bitflags! {
 }
 
 #[derive(Copy, Clone, Debug)]
-pub enum DragKind {}
+pub enum DragKind {
+    ParticleIdx(usize),
+}
 
 pub struct InputState {
     pub dragging: Option<DragKind>,
