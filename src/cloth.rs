@@ -11,7 +11,10 @@ pub const DAMPING: f32 = 0.01;
 pub const DEFAULT_INSTANCE_BUFFER_COUNT: u64 = 1024;
 
 // pub const CONSTRAINT_ITERATIONS: usize = 30;
-pub const CONSTRAINT_ITERATIONS: usize = 3;
+// pub const CONSTRAINT_ITERATIONS: usize = 10;
+pub const CONSTRAINT_ITERATIONS: usize = 2;
+// pub const CONSTRAINT_ITERATIONS: usize = 5;
+// pub const CONSTRAINT_ITERATIONS: usize = 2;
 
 fn time_secs() -> f64 {
     SystemTime::now()
@@ -42,15 +45,13 @@ impl Physics {
                 format,
                 camera_bind_group_layout,
                 // more cloth-y toilet paper
-                // 14.0,
-                // 10.0,
-                // 45,
-                // 55,
-                // most accurate toilet paper
-                10.0,
                 14.0,
-                22,
-                26,
+                10.0,
+                45 * 3,
+                55 * 3,
+                // most accurate toilet paper
+                // 10.0,
+                // 14.0,
                 // 22,
                 // 26,
                 // long 16:9-like cloth
@@ -209,6 +210,15 @@ impl Cloth {
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &Self::TEX_COORD_ATTRIBUTES,
         }
+    }
+
+    pub fn set_moveable(&mut self, x: usize, y: usize, moveable: bool) {
+        let i0 = self.get_particle_idx(x + 1, y);
+        let i1 = self.get_particle_idx(x, y);
+        let i2 = self.get_particle_idx(x, y + 1);
+        self.particles[i0].is_movable = moveable;
+        self.particles[i1].is_movable = moveable;
+        self.particles[i2].is_movable = moveable;
     }
 
     pub fn new(
@@ -613,8 +623,10 @@ impl Cloth {
 
     pub fn update(&mut self, timestep: f32) {
         // gravity
-        self.add_force(vec3(0.0, -2.8, 0.0) * timestep);
-        // self.add_wind_force(vec3(100.5, 0.0, 0.2) * timestep);
+        // self.add_force(vec3(0.0, -2.8, 0.0) * timestep);
+        self.add_force(vec3(0.0, -0.8, 0.0) * timestep);
+        self.add_wind_force(vec3(50.5, 0.0, 0.2) * timestep);
+        // self.add_wind_force(vec3(10.5, 0.0, 0.2) * timestep);
         // self.add_wind_force(vec3(00.5, -40.0, -10.2) * timestep);
         // self.add_wind_force(vec3(10.5, 0.0, 100.2) * timestep);
         // self.add_wind_force(vec3(0.5, 0.0, 0.2) * timestep);
@@ -732,49 +744,15 @@ impl Cloth {
         );
     }
 
-    pub fn intersects(&self, ray: &Ray, matrix: &Matrix4<f32>) -> Option<(usize, usize)> {
-        let mut i = false;
+    pub fn intersects(&self, ray: &Ray) -> Option<(usize, usize)> {
         for x in 0..self.num_particles_width - 1 {
             for y in 0..self.num_particles_height - 1 {
-                if self.triangle_intersection(
-                    [
-                        vec_to_point(&self.particles[(self.get_particle_idx(x + 1, y))].position),
-                        vec_to_point(&self.particles[self.get_particle_idx(x, y)].position),
-                        vec_to_point(&self.particles[self.get_particle_idx(x, y + 1)].position),
-                    ],
-                    ray,
-                    matrix,
-                    !i,
-                ) {
+                if ray.triangle_intersection([
+                    vec_to_point(&self.particles[(self.get_particle_idx(x + 1, y))].position),
+                    vec_to_point(&self.particles[self.get_particle_idx(x, y)].position),
+                    vec_to_point(&self.particles[self.get_particle_idx(x, y + 1)].position),
+                ]) {
                     return Some((x, y));
-                }
-                if i == false {
-                    let p0 = &self.particles[self.get_particle_idx(x + 1, y)];
-                    let p1 = &self.particles[self.get_particle_idx(x, y)];
-                    let p2 = &self.particles[self.get_particle_idx(x, y + 1)];
-                    println!(
-                        "before POS {:?} {:?} {:?}",
-                        p0.position, p1.position, p2.position
-                    );
-
-                    // let p0_pos = matrix.transform_point(Point3::new(
-                    //     p0.position.x,
-                    //     p0.position.y,
-                    //     p0.position.z,
-                    // ));
-                    // let p1_pos = matrix.transform_point(Point3::new(
-                    //     p1.position.x,
-                    //     p1.position.y,
-                    //     p1.position.z,
-                    // ));
-                    // let p2_pos = matrix.transform_point(Point3::new(
-                    //     p2.position.x,
-                    //     p2.position.y,
-                    //     p2.position.z,
-                    // ));
-
-                    // println!("POS {:?} {:?} {:?}", p0_pos, p1_pos, p2_pos);
-                    i = true;
                 }
             }
         }
@@ -782,65 +760,14 @@ impl Cloth {
         None
     }
 
-    fn triangle_intersection(
-        &self,
-        // [p0, p1, p2]: [&Particle; 3],
-        [p0, p1, p2]: [Point3<f32>; 3],
-        ray: &Ray,
-        matrix: &Matrix4<f32>,
-        i: bool,
-    ) -> bool {
-        // let p0_pos = matrix.transform_point(p0);
-        // let p1_pos = matrix.transform_point(p1);
-        // let p2_pos = matrix.transform_point(p2);
-        let p0_pos = p0;
-        let p1_pos = p1;
-        let p2_pos = p2;
+    pub fn mouse_force(&mut self, x: usize, y: usize, dx: f32, dy: f32) {
+        let i0 = self.get_particle_idx(x + 1, y);
+        let i1 = self.get_particle_idx(x, y);
+        let i2 = self.get_particle_idx(x, y + 1);
 
-        let e1 = &p1_pos - &p0_pos;
-        let e2 = &p2_pos - &p0_pos;
-
-        let q = ray.dir.cross(e2);
-        let det = e1.dot(q);
-
-        if i {
-            println!("DET {}", det);
-        }
-        if det > -f32::EPSILON && det < f32::EPSILON {
-            return false;
-        }
-
-        let inv_det = 1.0 / det;
-        let s = &ray.origin - &vec3(p0_pos.x, p0_pos.y, p0_pos.z);
-        let u = s.dot(q) * inv_det;
-        if i {
-            println!("U {}", u);
-        }
-
-        if u < 0.0 || u > 1.0 {
-            return false;
-        }
-
-        let r = s.cross(e1);
-        let v = ray.dir.dot(r) * inv_det;
-
-        if i {
-            println!("V {} U + V {}", u, u + v);
-        }
-
-        if v < 0.0 || u + v > 1.0 {
-            return false;
-        }
-
-        let t = e2.dot(r) * inv_det;
-        if t < 0.0 {
-            return false;
-        }
-        // if t < t_range.start || t_range.end < t {
-        //     return false;
-        // }
-
-        true
+        self.particles[i0].add_force(vec3(dx, dy, 0.0));
+        self.particles[i1].add_force(vec3(dx, dy, 0.0));
+        self.particles[i2].add_force(vec3(dx, dy, 0.0));
     }
 }
 

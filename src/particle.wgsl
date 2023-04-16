@@ -40,16 +40,14 @@ var s_diffuse: sampler;
 
 @fragment
 fn fs_main(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
-    var ret: vec4<f32> = textureSample(t_diffuse, s_diffuse, in.tex_coords);
-    if (!front_facing) {
-        ret = vec4<f32>(1.0, 1.0, 1.0, 1.0);
-    }
+    var ret: vec4<f32> = vec4<f32>(1.0, 1.0, 1.0, 1.0);
     let world_normal = normalize(vec3<f32>(50.0, 6.0, 50.0));
     // let world_normal = normalize(vec3<f32>(camera.view_pos.xyz));
-    let diffuse_strength = max(dot(in.normal, world_normal), 0.5);
+    let min = 0.0;
+    let diffuse_strength = max(dot(in.normal, world_normal), min);
     var color: vec3<f32> = vec3<f32>(ret.xyz) * diffuse_strength;
-    if (in.in_vertex_index <= 2u) {
-        color = vec3<f32>(1.0, 0.0, 0.0);
-    }
+    // if (in.in_vertex_index <= 2u) {
+    //     color = vec3<f32>(1.0, 0.0, 0.0);
+    // }
     return vec4<f32>(color, 1.0);
 }

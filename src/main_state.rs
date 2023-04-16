@@ -41,8 +41,7 @@ pub struct State {
     pub camera_bind_group: wgpu::BindGroup,
     pub projection: Projection,
 
-    pub ray_pipeline: RayPipeline,
-
+    // pub ray_pipeline: RayPipeline,
     #[cfg(feature = "debug")]
     pub debug: Debug,
 
@@ -149,6 +148,7 @@ impl State {
             config.format,
             &camera,
             &projection,
+            &camera_bind_group_layout,
             &config,
         );
 
@@ -168,8 +168,7 @@ impl State {
             camera_bind_group,
             projection,
 
-            ray_pipeline,
-
+            // ray_pipeline,
             #[cfg(feature = "debug")]
             debug: Debug::new(&device),
 
@@ -303,7 +302,16 @@ impl State {
                     .movement_state
                     .contains(MovementState::MOUSE_PRESSED)
                 {
-                    self.camera_controller.process_mouse(delta.0, delta.1)
+                    if let Some(DragKind::Particle(x, y)) = self.input.dragging.as_ref() {
+                        let dx = delta.0 as f32 * 2.0;
+                        let dy = -delta.1 as f32 * 2.0;
+
+                        self.physics.cloth.mouse_force(*x, *y, dx, dy);
+                        self.physics.cloth.mouse_force(*x - 1, *y - 1, dx, dy);
+                        self.physics.cloth.mouse_force(*x + 1, *y + 1, dx, dy);
+                    } else {
+                        self.camera_controller.process_mouse(delta.0, delta.1);
+                    }
                 }
             }
             DeviceEvent::Button { state, .. } => match state {
@@ -312,40 +320,50 @@ impl State {
                         .movement_state
                         .set(MovementState::MOUSE_PRESSED, true);
 
-                    // let pos = screen_space_to_clip_space(
-                    //     self.config.width as f32 / 2.0,
-                    //     self.config.height as f32 / 2.0,
-                    //     &self.mouse.pos.expect("Should be good"),
-                    // );
-                    let mouse_pos = self.mouse.pos.unwrap_or((0.0, 0.0).into());
-                    let pos = vec3(
-                        (2.0 * (mouse_pos.x / (self.config.width as f32 / SCREEN_SCALE))) - 1.0,
-                        1.0 - (2.0 * (mouse_pos.y / (self.config.height as f32 / SCREEN_SCALE))),
-                        0.0,
+                    if !self.input.modifier_state.contains(ModifiersState::SHIFT) {
+                        return false;
+                    }
+
+                    // let pos = self.mouse.pos.expect("Should be good");
+                    let pos = screen_space_to_clip_space(
+                        self.config.width as f32 / 2.0,
+                        self.config.height as f32 / 2.0,
+                        &self.mouse.pos.expect("Should be good"),
                     );
-                    println!("NICE: {:?}", pos);
+                    let inv_view = self.camera.calc_matrix().invert().unwrap();
+                    let inv_proj = self.projection.calc_matrix().invert().unwrap();
 
-                    let matrix = self.camera.calc_matrix().invert().unwrap();
-                    // let matrix = self.camera.calc_matrix();
+                    let pos_near = inv_view * inv_proj * vec4(pos.x, pos.y, 0.1, 1.0);
+                    let pos_near = pos_near.truncate() / pos_near.w;
 
-                    let origin = vec3(
-                        self.camera.position.x,
-                        self.camera.position.y,
-                        self.camera.position.z,
+                    let pos_far = inv_view * inv_proj * vec4(pos.x, pos.y, 100.0, 1.0);
+                    let pos_far = pos_far.truncate() / pos_far.w;
+
+                    let dir = (pos_near - pos_far).normalize();
+                    let ray = Ray::new(
+                        vec3(
+                            self.camera.position.x,
+                            self.camera.position.y,
+                            self.camera.position.z,
+                        ),
+                        dir,
                     );
-                    let look_at = self.camera.look_at_vec();
-                    let ray_dir = vec3(pos.x, pos.y, 0.0) + look_at;
-                    // let ray_dir = matrix.transform_vector(ray_dir);
-                    let ray = Ray::new(origin, ray_dir.normalize());
-
-                    println!("RAY {:?}", ray);
-                    let hit = self.physics.cloth.intersects(&ray, &matrix);
-                    println!("HIT {:?}", hit);
+                    let hit = self.physics.cloth.intersects(&ray);
+                    if let Some((x, y)) = hit {
+                        println!("HIT: {:?}", hit);
+                        self.input.dragging = Some(DragKind::Particle(x, y));
+                        // self.physics.cloth.set_moveable(x, y, false);
+                    }
                 }
                 ElementState::Released => {
                     self.input
                         .movement_state
                         .set(MovementState::MOUSE_PRESSED, false);
+
+                    if let Some(DragKind::Particle(x, y)) = self.input.dragging {
+                        // self.physics.cloth.set_moveable(x, y, true);
+                        self.input.dragging = None;
+                    }
                 }
             },
             _ => (),
@@ -386,8 +404,8 @@ impl State {
         );
         // }
 
-        self.ray_pipeline
-            .update(&self.queue, &self.camera, &self.projection, &self.config);
+        // self.ray_pipeline
+        //     .update(&self.queue, &self.camera, &self.projection, &self.config);
         self.physics.update(&self.queue, dt);
     }
 
@@ -435,11 +453,12 @@ impl State {
                 }),
             });
 
-            // self.physics
-            //     .cloth
-            //     .render(&self.camera_bind_group, &mut render_pass);
+            self.physics
+                .cloth
+                .render(&self.camera_bind_group, &mut render_pass);
 
-            self.ray_pipeline.render(&mut render_pass);
+            // self.ray_pipeline
+            //     .render(&mut render_pass, &self.camera_bind_group);
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));

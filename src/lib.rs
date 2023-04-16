@@ -18,7 +18,7 @@ use wasm_bindgen::prelude::*;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use bytemuck::{Pod, Zeroable};
-use cgmath::{ElementWise, Vector4};
+use cgmath::{vec2, ElementWise, Vector4};
 use main_state::State;
 use winit::{
     dpi::LogicalSize,
@@ -67,9 +67,14 @@ pub fn screen_space_to_clip_space(
     // (0, 0) -> (1920, 1080)
     // (-960, -540) -> (960, 540)
     // (-1, -1) -> (1, 1)
-    let pos = cgmath::vec2(pos.x - (width), -(pos.y - (height)));
-    let pos = cgmath::vec2(pos.x / (width), pos.y / (height));
-    pos
+    // let pos = cgmath::vec2(pos.x - (width), -(pos.y - (height)));
+    // let pos = cgmath::vec2(pos.x / (width), pos.y / (height));
+    // pos
+    let screen_size = vec2(width, height);
+
+    let mut ndc = pos.div_element_wise(screen_size) * 2.0 - vec2(1.0, 1.0);
+    ndc.y = -ndc.y;
+    ndc
 }
 
 pub fn clip_space_to_screen_space(
